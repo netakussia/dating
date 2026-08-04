@@ -10,6 +10,7 @@ from services.confession_service import ConfessionService
 
 router = Router()
 
+
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
     args = message.text.split(maxsplit=1)
@@ -23,5 +24,12 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, sett
 
 @router.message(Command("help"))
 @router.message(lambda m: m.text == "❓ Помощь")
-async def help_(message: Message) -> None:
-    await message.answer("Создайте анкету через «Моя анкета», затем откройте «Знакомства». Признания отправляются анонимно.")
+async def help_(message: Message, settings) -> None:
+    support_lines = []
+    for admin_id in settings.admin_ids:
+        support_lines.append(f"<a href=\"tg://user?id={admin_id}\">Админ #{admin_id}</a>")
+    support = "\n".join(support_lines) if support_lines else "Служба поддержки не настроена."
+    await message.answer(
+        "Создайте анкету через «Моя анкета», затем откройте «Знакомства». Признания отправляются анонимно.\n\n"
+        f"Если нужна помощь, напишите одному из администраторов:\n{support}"
+    )

@@ -1,0 +1,19 @@
+{
+  "categories": [
+    {"key": "music", "label": "🎧 Люблю музыку", "aliases": ["music", "музыка", "muzica", "spotify", "рок", "рэп", "гитара", "rock", "rap", "song"]},
+    {"key": "sport", "label": "🏃 Спорт", "aliases": ["sport", "спорт", "fitness", "фитнес", "run", "gym", "football", "basketball", "tennis"]},
+    {"key": "cinema", "label": "🎬 Кино", "aliases": ["cinema", "кино", "movie", "movies", "film", "films"]},
+    {"key": "anime", "label": "🌸 Аниме", "aliases": ["anime", "аниме", "manga"]},
+    {"key": "programming", "label": "💻 Программирование", "aliases": ["programming", "программирование", "code", "coding", "dev", "python", "java", "javascript"]},
+    {"key": "games", "label": "🎮 Игры", "aliases": ["games", "игры", "game", "gamer", "gaming", "csgo", "minecraft"]},
+    {"key": "books", "label": "📚 Книги", "aliases": ["books", "книги", "book", "reading", "literature"]},
+    {"key": "cars", "label": "🚗 Автомобили", "aliases": ["cars", "машины", "авто", "car", "automotive"]},
+    {"key": "travel", "label": "✈️ Путешествия", "aliases": ["travel", "traveling", "путешествия", "trip", "voyage"]},
+    {"key": "drawing", "label": "🎨 Рисование", "aliases": ["drawing", "рисование", "art", "paint", "drawing"]},
+    {"key": "photography", "label": "📷 Фотография", "aliases": ["photography", "фотография", "photo", "camera"]},
+    {"key": "cooking", "label": "🍳 Кулинария", "aliases": ["cooking", "кулинария", "food", "cook", "chef"]},
+    {"key": "animals", "label": "🐾 Животные", "aliases": ["animals", "животные", "pet", "pets", "dog", "cat"]},
+    {"key": "dance", "label": "💃 Танцы", "aliases": ["dance", "танцы", "dancing", "music"]},
+    {"key": "science", "label": "🔬 Наука", "aliases": ["science", "наука", "astro", "astrophysics", "physics", "biology"]}
+  ]
+}

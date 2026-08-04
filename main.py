@@ -14,9 +14,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 import models  # noqa: F401
 
+logger = logging.getLogger(__name__)
+
+
 async def run() -> None:
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
+    logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logger.info("Starting dating bot")
     engine = create_async_engine(settings.database_url)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -25,12 +29,19 @@ async def run() -> None:
         await connection.execute(
             text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS moderation_locked BOOLEAN NOT NULL DEFAULT FALSE")
         )
+        await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS photo_file_ids JSON"))
+        await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS main_photo_file_id VARCHAR(255)"))
+        await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS locale VARCHAR(8) DEFAULT 'ru'"))
+        await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS extra_data JSON"))
     factory = make_session_factory(settings)
     redis = Redis.from_url(settings.redis_url)
     bot, dp = create_dispatcher(settings, factory, redis)
     try:
         await set_commands(bot)
         await dp.start_polling(bot)
+    except Exception:
+        logger.exception("Bot polling failed")
+        raise
     finally:
         await redis.aclose()
         await engine.dispose()
