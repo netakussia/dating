@@ -1,7 +1,7 @@
 import enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Enum, String
+from sqlalchemy import BigInteger, Enum, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.base import Base, TimestampMixin
@@ -29,4 +29,6 @@ class User(TimestampMixin, Base):
     username: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.ACTIVE, index=True)
+    # Internal-only value. It must never be rendered in the user interface.
+    trust_score: Mapped[int] = mapped_column(Integer, default=95, index=True)
     profile: Mapped["Profile | None"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")

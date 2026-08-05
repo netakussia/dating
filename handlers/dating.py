@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from keyboards.dating import dating_keyboard, report_reasons_keyboard
 from models import ReportReason
 from repositories.discovery import DiscoveryRepository
-from repositories.report import ReportRepository
+from services.report_service import ReportService
 from services.like_service import LikeService
 from services.match_service import MatchService
 from services.notification_service import NotificationService
@@ -160,10 +160,13 @@ async def report_reason(callback: CallbackQuery, session: AsyncSession, settings
     except (ValueError, TypeError):
         await callback.answer("Некорректная жалоба.", show_alert=True)
         return
-    _, created, threshold_reached = await ReportRepository(session).add(
-        callback.from_user.id, target, report_reason_value, threshold=settings.report_threshold
-    )
-    await DiscoveryRepository(session).block(callback.from_user.id, target)
+    try:
+        _, created, threshold_reached = await ReportService(session, threshold=settings.report_threshold).submit(
+            callback.from_user.id, target, report_reason_value
+        )
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
     RecommendationService(session, weights=settings.matching_weights).remove_candidate(callback.from_user.id, target)
     if threshold_reached:
         for admin_id in settings.admin_ids:

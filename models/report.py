@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, Text
+from sqlalchemy import BigInteger, Enum, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base, TimestampMixin, UUIDPKMixin
@@ -14,6 +14,7 @@ class ReportStatus(str, enum.Enum):
 
 class Report(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "reports"
+    __table_args__ = (UniqueConstraint("reporter_id", "target_user_id", name="uq_reports_reporter_target"),)
     reporter_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     target_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     reason: Mapped[ReportReason] = mapped_column(Enum(ReportReason))

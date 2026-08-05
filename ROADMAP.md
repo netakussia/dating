@@ -9,12 +9,13 @@
 - [x] Лайки
 - [x] Мэтчи
 - [x] Жалобы
-- [ ] Верификация
+- [x] Trust System: верификация, жалобы, автоматическая модерация, апелляции, NSFW-очередь, рейтинг доверия
 - [x] Админ-панель
 - [x] Анонимные признания
 - [x] Локализация (базовая)
 - [ ] Полировка UX
 - [ ] Стресс-тесты
+- [ ] Production hardening: baseline Alembic, Redis queue, реальный NSFW/face provider, retention и observability
 - [ ] Production Release
 
 ## Принцип обновления

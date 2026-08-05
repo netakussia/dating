@@ -1,104 +1,65 @@
 # Next Agent Context
 
-Документ отражает фактическое состояние проекта после регистрации, профиля и matching-модуля.
+Документ отражает фактическое состояние после аудита matching и Trust System.
 
-## 1. Что реализовано
+## Что реализовано
 
-### Registration/Profile
+- Регистрация и редактирование профиля через FSM, DTO `ProfileDraft`, валидатор, нормализацию интересов, паузу и управление фото.
+- Recommendation Engine строит совместимую выборку в SQL, ранжирует её стратегией и записывает показы. Лайк/пропуск/жалоба обновляют очередь; блокировка исключается в обоих направлениях.
+- Like Engine и Match Engine используют уникальные пары и savepoint, поэтому создание лайка и матча идемпотентно.
+- Trust System: Video Note verification, уникальные жалобы, автоматический Under Review, апелляции, Trust Score, аудит модераторов и очереди NSFW/лица. Высокий NSFW score скрывает анкету до решения.
+- Redis используется для FSM и rate limit. `MemoryRecommendationQueue` является текущим single-process адаптером.
 
-- FSM-регистрация: пол, целевой пол, имя, возраст, район, учреждение, интересы, bio, фото и preview.
-- `ProfileService`, `ProfileDraft`, `ProfileValidationError`, нормализация интересов и базовая JSON-локализация.
-- Пауза, возобновление, удаление, редактирование и управление фотографиями.
+## Добавленные и расширенные таблицы
 
-### Recommendation Engine
+- `profiles`: профиль, `moderation_locked`, фото, locale/extra_data, `verification_status`, `moderation_status`, `report_count`.
+- `likes`, `matches`, `dislikes`, `blocks`: направленные действия; Like/Match/Block защищены уникальными парами.
+- `recommendation_views`: viewer/candidate/score, индексы `(viewer_id, created_at)` и `(candidate_id, created_at)`.
+- `reports`, `appeals`, `admin_logs`: модерация и аудит; Report имеет уникальную пару reporter/target в миграции Trust.
+- `verification_requests`, `moderation_cases`, `photo_moderations`, `trust_score_events`: расширяемые данные Trust.
 
-- `RecommendationService` строит очередь совместимых профилей и сортирует их по Score 0–100.
-- `RecommendationStrategy` — асинхронный контракт стратегии оценки.
-- `WeightedRecommendationStrategy` — текущая детерминированная реализация.
-- Веса задаются через `MATCHING_WEIGHTS_JSON`; текущие значения: gender 35, target_gender 25, age 10, district 10, institution 10, interests 7, bio 3.
-- `RecommendationQueue` — сменяемый контракт очереди; `MemoryRecommendationQueue` — текущий адаптер.
-- После показа выполняется повторная DB-проверка активности, видимости, лайка и блока, чтобы устаревшая очередь не отдала невалидную анкету.
-- Пропуск переносит профиль в конец очереди; лайк/блок/жалоба удаляют его из текущей очереди. При исчерпании очередь пересчитывается.
-- Пользователь видит только итоговый процент совместимости.
+Миграции: `20260805_matching_engine.py`, `20260805_trust_system.py`. Полного baseline для исторической схемы нет.
 
-### Likes/Matches
+## Сервисы и репозитории
 
-- `LikeService` создаёт однонаправленный Like, валидирует сообщение, запрещает self-like и повторные операции.
-- `MatchService` проверяет reciprocal Like, выставляет `is_mutual` и создаёт нормализованный Match один раз.
-- Уведомления о новом Like анонимны; контакты раскрываются только при новом Match.
-- Вкладка «💕 Мои симпатии» читает Match через `MatchService`.
+- Matching: `RecommendationService`, `RecommendationStrategy`, `WeightedRecommendationStrategy`, `RecommendationQueue`, `RecommendationRepository`.
+- Social: `LikeService`/`LikeRepository`, `MatchService`/`MatchRepository`, `ProfileService`, `DiscoveryRepository`.
+- Trust: `VerificationService`, `ReportService`, `ModerationService`, `PhotoModerationService`, `TrustScoreService`, `TrustStatsService`, `TrustRepository`.
+- Cross-cutting: `NotificationService`, `LocalizationService`, `MatchingStatsService`, rate-limit middleware.
 
-### Diagnostics/Statistics
+## Интерфейсы, которые нельзя менять без миграции потребителей
 
-- `RecommendationView` сохраняет viewer, candidate и Score.
-- `MatchingStatsService` агрегирует пользователей, активные профили, просмотры, лайки, матчи, жалобы, CTR и среднюю совместимость.
-- Админская команда `/debug_matching` показывает агрегаты и причины исключения кандидатов.
-
-## 2. Добавленные или расширенные таблицы
-
-- `profiles`: `moderation_locked`, `photo_file_ids`, `main_photo_file_id`, `locale`, `extra_data`.
-- `likes`: уникальная направленная пара и комментарий.
-- `matches`: уникальная нормализованная пара пользователей.
-- `dislikes`: аналитическая запись пропуска; больше не означает вечное исключение из выдачи.
-- `recommendation_views`: UUID, `viewer_id`, `candidate_id`, `score`, timestamps; индексы `(viewer_id, created_at)` и `(candidate_id, created_at)`.
-
-Для `recommendation_views` добавлена `database/migrations/versions/20260805_matching_engine.py`. Полного baseline Alembic для старых таблиц ещё нет.
-
-## 3. Сервисы и репозитории
-
-- `RecommendationService`, `WeightedRecommendationStrategy`, `RecommendationQueue`.
-- `LikeService`, `MatchService`, `MatchingStatsService`, `MatchingDebugService`.
-- `RecommendationRepository`, `LikeRepository`, `MatchRepository`, `MatchingStatsRepository`.
-- `ProfileService`, `ConfessionService`, `NotificationService`, `LocalizationService`, `InterestNormalizer` существовали ранее и остаются действующими контрактами.
-
-## 4. Интерфейсы, которые нельзя менять без миграции потребителей
-
-- `RecommendationStrategy.score(viewer, candidate)`.
-- `RecommendationService.next_recommendation`, `next_profile`, `rebuild_queue`, `skip`, `remove_candidate`.
+- `RecommendationStrategy.score(viewer, candidate)`, `RecommendationService.next_recommendation`, `rebuild_queue`, `skip`, `remove_candidate`.
 - `RecommendationQueue.replace/pop/move_to_end/remove/clear`.
-- `LikeService.create` и `LikeResult.created`.
-- `MatchService.create_if_mutual`, `matches_for` и `MatchResult.created`.
-- `ProfileService` и `ProfileDraft.to_payload()`.
-- FSM registration/dating states и callback data `like:*`, `comment:*`, `skip:*`, `block:*`, `report:*`.
-- Поля `Profile.gender`, `target_gender`, `photo_file_ids`, `main_photo_file_id`, `locale`, `extra_data`.
+- `LikeService.create`, `MatchService.create_if_mutual`, `MatchService.matches_for`.
+- `ProfileService.create_or_update` и `ProfileDraft.to_payload()`.
+- `PhotoSafetyProvider.assess(photo_file_id)`.
+- FSM/callback data: `like:*`, `comment:*`, `skip:*`, `block:*`, `report:*`, `verify:*`, `case:*`, `appeal:*`.
 
-Новые стратегии должны подключаться через `strategy=` и не должны добавлять условные ветки в handlers.
+## Принятые решения
 
-## 5. Принятые решения
+- Eligibility (visibility, active status, likes, двусторонние блоки) остаётся SQL-обязанностью; стратегия отвечает только за score. ML/AI не должен обходить этот фильтр.
+- Веса matching меняются через `MATCHING_WEIGHTS_JSON`; неизвестные/отрицательные значения отклоняются, нулевые допустимы при положительной сумме.
+- Внутренний Trust Score хранится вместе с неизменяемым журналом событий; действия модератора пишутся в `AdminLog`.
+- NSFW/face — сменяемый provider-контракт, текущий dependency-free provider годится только для разработки.
 
-- Фильтры eligibility находятся в repository/SQL, а ранжирование — в strategy. Так ML/AI не сможет случайно обойти требования безопасности и модерации.
-- Score нормализуется в 0–100 и округляется до одной десятичной доли; UI показывает целый процент.
-- Memory queue выбрана как минимальный адаптер без жёсткой зависимости от Redis. Источником истины остаётся PostgreSQL.
-- Like и Match защищены DB unique constraints, предварительным поиском и savepoint-операциями для конкурирующих запросов.
-- Пропуск не является вечным blacklist: он перемещается в конец текущей временной очереди.
-- Просмотры записываются отдельной таблицей, потому что без них нельзя корректно считать CTR и среднюю совместимость.
+## Потенциальные проблемы
 
-## 6. Потенциальные проблемы
+- Memory queue не синхронизируется между процессами и теряется при рестарте.
+- Нет baseline Alembic; `main.py` всё ещё применяет `create_all` и inline ALTER.
+- `report_count` не обновляется атомарно при конкурирующих жалобах; требуется SQL `UPDATE ... RETURNING`.
+- Событийные таблицы не имеют retention/партиционирования; статистика не имеет временных окон.
+- Внешняя/batch ML-стратегия потребует отдельного batch API: текущий контракт вызывает score для каждого кандидата.
+- UI локализован частично, уведомления не имеют outbox/retry очереди; NSFW/face provider необходимо заменить реальной локальной моделью до production.
 
-- Memory queue не синхронизируется между несколькими процессами и теряется при рестарте; для production нужен Redis-адаптер с атомарными операциями.
-- Нет полноценного Alembic baseline; `main.py` всё ещё использует `create_all` и inline SQL для совместимости.
-- События просмотров пока не имеют retention/партиционирования и могут расти бесконечно.
-- Статистика агрегируется за всю историю, без временных окон и сегментации.
-- Локализация покрывает не весь UI; часть строк находится в handlers.
-- `NSFWService` остаётся заглушкой.
-- Нет отдельной domain-event/observability модели и полноценной retry-политики уведомлений.
-- Конкурентный `report_count` и уникальность повторных жалоб требуют отдельного production migration с уникальным ограничением `(reporter_id, target_user_id)`.
+## Критически важные места
 
-## 7. Критически важные места
+- `repositories/recommendation.py` — safety/visibility SQL-фильтры.
+- `services/recommendation.py` и `services/recommendation_strategy.py` — жизненный цикл очереди и расширяемое ранжирование.
+- `services/like_service.py`, `services/match_service.py`, их репозитории — идемпотентность и приватность.
+- `services/report_service.py`, `services/moderation_service.py`, `repositories/trust.py` — Trust policy и аудит.
+- `main.py` и `database/migrations/` — порядок и безопасное обновление схемы.
 
-- `services/recommendation_strategy.py`: контракт расширения алгоритмов и веса.
-- `services/recommendation.py`: orchestration, queue lifecycle и повторная eligibility-проверка.
-- `repositories/recommendation.py`: SQL-фильтры видимости, статуса, лайков и блоков.
-- `services/like_service.py`, `services/match_service.py`: privacy, idempotency и порядок уведомлений.
-- `models/like.py`, `models/match.py`, `models/recommendation_view.py`: ограничения целостности и аналитическая схема.
-- `handlers/dating.py`: callback-контракты и пользовательский сценарий.
-- `config.py`: внешняя конфигурация весов и порога жалоб.
-- `main.py` и миграции: порядок инициализации схемы.
+## Следующий рекомендуемый модуль
 
-## 8. Рекомендуемый следующий модуль
-
-Следующий приоритет — production hardening: baseline Alembic, Redis queue, временные окна статистики, observability и integration-тесты с PostgreSQL/Redis. После этого можно добавить `PopularityRecommendationStrategy`, `ActivityRecommendationStrategy`, а затем `HybridRecommendationStrategy` или ML-адаптер. Верификацию фото и реальный NSFW-провайдер следует реализовать до публичного запуска.
-
-## 9. Обязательная проверка перед изменениями
-
-Прочитать `PROJECT_RULES.md`, `ROADMAP.md`, `docs/architecture.md`, `docs/database.md`, `docs/matching.md`, `handlers/dating.py`, `services/recommendation.py`, `services/recommendation_strategy.py`, `repositories/recommendation.py`, `models/profile.py`, `models/like.py`, `models/match.py` и `main.py`.
+Production hardening: Alembic baseline и удаление inline schema changes, Redis-backed recommendation queue, атомарный счётчик жалоб, реальный локальный NSFW/face provider, outbox для уведомлений, retention/observability и PostgreSQL/Redis integration + load tests.

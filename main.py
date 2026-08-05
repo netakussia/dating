@@ -33,6 +33,22 @@ async def run() -> None:
         await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS main_photo_file_id VARCHAR(255)"))
         await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS locale VARCHAR(8) DEFAULT 'ru'"))
         await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS extra_data JSON"))
+        await connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS trust_score INTEGER NOT NULL DEFAULT 95"))
+        await connection.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE verificationstatus AS ENUM ('UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED');
+            EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        """))
+        await connection.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE moderationstatus AS ENUM ('CLEAR', 'UNDER_REVIEW');
+            EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        """))
+        await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS verification_status verificationstatus NOT NULL DEFAULT 'UNVERIFIED'"))
+        await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS moderation_status moderationstatus NOT NULL DEFAULT 'CLEAR'"))
+        await connection.execute(text("ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS target_type VARCHAR(32)"))
+        await connection.execute(text("ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS target_id VARCHAR(64)"))
+        await connection.execute(text("ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS metadata_json JSON NOT NULL DEFAULT '{}'"))
     factory = make_session_factory(settings)
     redis = Redis.from_url(settings.redis_url)
     bot, dp = create_dispatcher(settings, factory, redis)

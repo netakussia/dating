@@ -12,6 +12,7 @@ from keyboards.dating import choice_keyboard
 from keyboards.profile import registration_preview_keyboard
 from services.localization import LocalizationService
 from services.profile_service import ProfileService
+from services.photo_moderation_service import PhotoModerationService
 from states.registration import RegistrationState
 from validators.profile_validator import ProfileValidationError
 
@@ -292,7 +293,7 @@ async def non_photo(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(RegistrationState.preview, F.data == "profile:publish")
-async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSession, settings) -> None:
     draft = await _get_draft(state)
     payload = ProfileDraft(
         gender=draft.get("gender"),
@@ -317,8 +318,16 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
         await callback.message.answer(f"Проверьте анкету:\n{details}")
         await callback.answer("Данные анкеты не прошли проверку", show_alert=True)
         return
+    flagged_no_face = False
+    photo_moderation = PhotoModerationService(session, nsfw_threshold=settings.nsfw_threshold)
+    for photo_file_id in payload.photo_file_ids:
+        assessment = await photo_moderation.inspect(callback.from_user.id, photo_file_id)
+        flagged_no_face = flagged_no_face or not assessment.face_detected
     await state.clear()
-    await callback.message.answer("✅ Анкета опубликована.")
+    if flagged_no_face:
+        await callback.message.answer("⚠️ На фото не найдено лицо. Замените фотографию; анкета отправлена на проверку.")
+    else:
+        await callback.message.answer("✅ Анкета опубликована.")
     await callback.answer()
 
 

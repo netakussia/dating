@@ -13,37 +13,57 @@ class RecommendationRepository:
 
     async def eligible_profiles(self, user_id: int) -> list[Profile]:
         liked_ids = select(Like.to_user_id).where(Like.from_user_id == user_id)
-        blocked_ids = select(Block.blocked_id).where(Block.blocker_id == user_id)
-        statement = select(Profile).join(User).where(
-            Profile.user_id != user_id,
-            Profile.is_visible.is_(True),
-            Profile.moderation_locked.is_(False),
-            User.status == UserStatus.ACTIVE,
-            Profile.user_id.not_in(liked_ids),
-            Profile.user_id.not_in(blocked_ids),
+        blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == user_id)
+        blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
+        statement = (
+            select(Profile)
+            .join(User)
+            .where(
+                Profile.user_id != user_id,
+                Profile.is_visible.is_(True),
+                Profile.moderation_locked.is_(False),
+                User.status == UserStatus.ACTIVE,
+                Profile.user_id.not_in(liked_ids),
+                Profile.user_id.not_in(blocked_by_me),
+                Profile.user_id.not_in(blocked_me),
+            )
         )
         return list((await self.session.scalars(statement)).all())
 
     async def eligible_profile(self, user_id: int, candidate_id: int) -> Profile | None:
         liked_ids = select(Like.to_user_id).where(Like.from_user_id == user_id)
-        blocked_ids = select(Block.blocked_id).where(Block.blocker_id == user_id)
-        statement = select(Profile).join(User).where(
-            Profile.user_id == candidate_id,
-            Profile.user_id != user_id,
-            Profile.is_visible.is_(True),
-            Profile.moderation_locked.is_(False),
-            User.status == UserStatus.ACTIVE,
-            Profile.user_id.not_in(liked_ids),
-            Profile.user_id.not_in(blocked_ids),
+        blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == user_id)
+        blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
+        statement = (
+            select(Profile)
+            .join(User)
+            .where(
+                Profile.user_id == candidate_id,
+                Profile.user_id != user_id,
+                Profile.is_visible.is_(True),
+                Profile.moderation_locked.is_(False),
+                User.status == UserStatus.ACTIVE,
+                Profile.user_id.not_in(liked_ids),
+                Profile.user_id.not_in(blocked_by_me),
+                Profile.user_id.not_in(blocked_me),
+            )
         )
         return await self.session.scalar(statement)
 
     async def active_profiles(self, user_id: int) -> list[Profile]:
-        statement = select(Profile).join(User).where(
-            Profile.user_id != user_id,
-            Profile.is_visible.is_(True),
-            Profile.moderation_locked.is_(False),
-            User.status == UserStatus.ACTIVE,
+        blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == user_id)
+        blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
+        statement = (
+            select(Profile)
+            .join(User)
+            .where(
+                Profile.user_id != user_id,
+                Profile.is_visible.is_(True),
+                Profile.moderation_locked.is_(False),
+                User.status == UserStatus.ACTIVE,
+                Profile.user_id.not_in(blocked_by_me),
+                Profile.user_id.not_in(blocked_me),
+            )
         )
         return list((await self.session.scalars(statement)).all())
 

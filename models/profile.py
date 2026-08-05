@@ -16,6 +16,18 @@ class Gender(str, enum.Enum):
     ALL = "ALL"
 
 
+class VerificationStatus(str, enum.Enum):
+    UNVERIFIED = "UNVERIFIED"
+    PENDING = "PENDING"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
+
+
+class ModerationStatus(str, enum.Enum):
+    CLEAR = "CLEAR"
+    UNDER_REVIEW = "UNDER_REVIEW"
+
+
 class Profile(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "profiles"
     __table_args__ = (CheckConstraint("age >= 14 AND age <= 99", name="valid_age"),)
@@ -36,4 +48,10 @@ class Profile(UUIDPKMixin, TimestampMixin, Base):
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     moderation_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     report_count: Mapped[int] = mapped_column(Integer, default=0)
+    verification_status: Mapped[VerificationStatus] = mapped_column(
+        Enum(VerificationStatus), default=VerificationStatus.UNVERIFIED, index=True
+    )
+    moderation_status: Mapped[ModerationStatus] = mapped_column(
+        Enum(ModerationStatus), default=ModerationStatus.CLEAR, index=True
+    )
     user: Mapped["User"] = relationship(back_populates="profile")

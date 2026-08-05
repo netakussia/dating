@@ -15,8 +15,8 @@ router = Router()
 @router.message(F.text == "🆘 Апелляция")
 async def appeal_start(message: Message, state: FSMContext, session: AsyncSession) -> None:
     user = await UserRepository(session).get(message.from_user.id)
-    if user is None or user.status != UserStatus.SUSPENDED:
-        await message.answer("Апелляция доступна только для приостановленной анкеты.")
+    if user is None or user.status not in {UserStatus.SUSPENDED, UserStatus.BANNED}:
+        await message.answer("Апелляция доступна только после ограничения или блокировки анкеты.")
         return
     await state.set_state(AppealState.enter_text)
     await message.answer("Опишите ситуацию для модератора (20–1500 символов).")

@@ -18,6 +18,8 @@ async def profile(message: Message, session: AsyncSession, state: FSMContext) ->
         await start_registration(message, state)
         return
     caption = f"{p.name}, {p.age}\n📍 {p.district}\n🏫 {p.institution}\n🎯 {', '.join(p.interests)}\n\n{p.bio}"
+    verification = "🟢 Проверенный" if p.verification_status.value == "VERIFIED" else "⚪ Непроверенный"
+    caption += f"\n\n{verification}"
     await message.answer_photo(p.photo_file_id, caption=caption, reply_markup=profile_keyboard(p.is_visible))
 
 
