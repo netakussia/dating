@@ -5,7 +5,7 @@ from database.base import Base, TimestampMixin, UUIDPKMixin
 
 
 class Dislike(UUIDPKMixin, TimestampMixin, Base):
-    """A skipped profile. It is kept so the same profile is not shown again."""
+    """A skip is retained for analytics; recommendation queues place it at the end."""
 
     __tablename__ = "dislikes"
     __table_args__ = (UniqueConstraint("from_user_id", "to_user_id"),)

@@ -7,6 +7,7 @@ from models.like import Like
 from models.match import Match
 from models.profile import Gender, Profile
 from models.report import Report, ReportReason, ReportStatus
+from models.recommendation_view import RecommendationView
 from models.user import User, UserRole, UserStatus
 
-__all__ = ("AdminLog", "Appeal", "AppealStatus", "Block", "Confession", "ConfessionStatus", "Dislike", "Gender", "Like", "Match", "Profile", "Report", "ReportReason", "ReportStatus", "User", "UserRole", "UserStatus")
+__all__ = ("AdminLog", "Appeal", "AppealStatus", "Block", "Confession", "ConfessionStatus", "Dislike", "Gender", "Like", "Match", "Profile", "RecommendationView", "Report", "ReportReason", "ReportStatus", "User", "UserRole", "UserStatus")

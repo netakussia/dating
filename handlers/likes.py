@@ -3,14 +3,15 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.discovery import DiscoveryRepository
+from services.match_service import MatchService
 
 router = Router()
 
 
-@router.message(F.text == "❤️ Симпатии")
+@router.message(F.text.in_({"❤️ Симпатии", "💕 Мои симпатии"}))
 async def likes_history(message: Message, session: AsyncSession) -> None:
     repo = DiscoveryRepository(session)
-    matches = await repo.matches(message.from_user.id)
+    matches = await MatchService(session).matches_for(message.from_user.id)
 
     match_lines: list[str] = []
     for match in matches[:20]:
@@ -21,4 +22,7 @@ async def likes_history(message: Message, session: AsyncSession) -> None:
         match_lines.append(f"• {name} — {contact}")
 
     matches_text = "\n".join(match_lines) if match_lines else "Пока нет взаимных симпатий."
-    await message.answer(f"<b>Взаимные симпатии и контакты</b>\n{matches_text}\n\nВходящие лайки остаются анонимными до взаимного лайка.")
+    await message.answer(
+        f"<b>Взаимные симпатии и контакты</b>\n{matches_text}\n\n"
+        "Входящие лайки остаются анонимными до взаимного лайка."
+    )

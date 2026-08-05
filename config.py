@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 
 from pydantic import Field
@@ -14,6 +15,8 @@ class Settings(BaseSettings):
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
     log_level: str = "INFO"
     nsfw_threshold: float = 0.85
+    matching_weights_raw: str = Field(default="", alias="MATCHING_WEIGHTS_JSON")
+    report_threshold: int = Field(default=3, ge=1, alias="REPORT_THRESHOLD")
 
     @property
     def admin_ids(self) -> set[int]:
@@ -23,6 +26,31 @@ class Settings(BaseSettings):
             return {int(item) for item in values}
         except ValueError as error:
             raise ValueError("ADMIN_IDS должен содержать только числовые Telegram ID через запятую.") from error
+
+    @property
+    def matching_weights(self) -> dict[str, float]:
+        defaults = {
+            "gender": 35.0,
+            "target_gender": 25.0,
+            "age": 10.0,
+            "district": 10.0,
+            "institution": 10.0,
+            "interests": 7.0,
+            "bio": 3.0,
+        }
+        if not self.matching_weights_raw:
+            return defaults
+        try:
+            configured = json.loads(self.matching_weights_raw)
+        except json.JSONDecodeError as error:
+            raise ValueError("MATCHING_WEIGHTS_JSON должен содержать JSON-объект с числовыми весами.") from error
+        if not isinstance(configured, dict):
+            raise ValueError("MATCHING_WEIGHTS_JSON должен содержать JSON-объект.")
+        for name, value in configured.items():
+            if name not in defaults or not isinstance(value, int | float) or value < 0:
+                raise ValueError(f"Некорректный вес matching: {name!r}.")
+            defaults[name] = float(value)
+        return defaults
 
 
 @lru_cache

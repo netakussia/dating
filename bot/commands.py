@@ -8,5 +8,6 @@ async def set_commands(bot: Bot) -> None:
             BotCommand(command="start", description="Открыть бота"),
             BotCommand(command="help", description="Помощь"),
             BotCommand(command="admin", description="Админ-панель"),
+            BotCommand(command="debug_matching", description="Диагностика matching (admin)"),
         ]
     )

@@ -2,6 +2,9 @@ from repositories.confession import ConfessionRepository
 from repositories.appeal import AppealRepository
 from repositories.discovery import DiscoveryRepository
 from repositories.like import LikeRepository
+from repositories.match import MatchRepository
+from repositories.matching_stats import MatchingStatsRepository
 from repositories.profile import ProfileRepository
+from repositories.recommendation import RecommendationRepository
 from repositories.report import ReportRepository
 from repositories.user import UserRepository

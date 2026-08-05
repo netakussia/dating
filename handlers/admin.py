@@ -13,6 +13,7 @@ from repositories.appeal import AppealRepository
 from repositories.profile import ProfileRepository
 from repositories.report import ReportRepository
 from repositories.user import UserRepository
+from services.matching_debug import MatchingDebugService
 from services.notification_service import NotificationService
 from states.admin import AdminState
 
@@ -28,6 +29,33 @@ async def admin(message: Message, settings: Settings) -> None:
     if not allowed(message.from_user.id, settings):
         return
     await message.answer("Панель модерации", reply_markup=admin_keyboard())
+
+
+@router.message(Command("debug_matching"))
+async def debug_matching(message: Message, session: AsyncSession, settings: Settings) -> None:
+    if not allowed(message.from_user.id, settings):
+        return
+    report = await MatchingDebugService(session, weights=settings.matching_weights).report_for(message.from_user.id)
+    excluded = [item for item in report.candidates if not item.included]
+    lines = [
+        "<b>Matching debug</b>",
+        f"Пользователей: {report.stats.users}; активных: {report.stats.active_users}",
+        f"Просмотров: {report.stats.views}; лайков: {report.stats.likes}; матчей: {report.stats.matches}",
+        f"CTR: {report.stats.ctr}%; средняя совместимость: {report.stats.average_compatibility}%",
+        f"Кандидатов после базовых фильтров: {len(report.candidates)}",
+        f"Прошли фильтр пола/цели: {report.gender_compatible}",
+        (
+            f"Релевантный возраст: {report.age_relevant}; совпали районы: {report.same_district}; "
+            f"общие интересы: {report.shared_interests}"
+        ),
+        f"В очереди: {len(report.candidates) - len(excluded)}",
+        "Исключения:",
+    ]
+    if excluded:
+        lines.extend(f"• {item.candidate_id}: {', '.join(item.reasons)}" for item in excluded[:50])
+    else:
+        lines.append("• нет")
+    await message.answer("\n".join(lines))
 
 
 @router.callback_query(F.data == "admin:reports")
@@ -142,7 +170,10 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
         if profile:
             profile.moderation_locked = False
         await repo.resolve(appeal_id, AppealStatus.RESOLVED, callback.from_user.id)
-        await callback.bot.send_message(appeal.user_id, "✅ Апелляция одобрена. Ограничение снято; при желании включите видимость анкеты.")
+        await callback.bot.send_message(
+            appeal.user_id,
+            "✅ Апелляция одобрена. Ограничение снято; при желании включите видимость анкеты.",
+        )
         result = "Апелляция одобрена, аккаунт восстановлен."
     else:
         await repo.resolve(appeal_id, AppealStatus.REJECTED, callback.from_user.id)

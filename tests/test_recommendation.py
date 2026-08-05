@@ -1,35 +1,177 @@
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 import pytest
 
+from models import Gender
 from services.recommendation import RecommendationService
-from models.profile import Profile
+from services.recommendation_queue import MemoryRecommendationQueue, QueueEntry
+from services.recommendation_strategy import WeightedRecommendationStrategy
 
 
-class DummyProfile:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+def profile(user_id: int, *, age: int = 24, district: str = "Center", interests: list[str] | None = None):
+    return SimpleNamespace(
+        user_id=user_id,
+        gender=Gender.MALE if user_id % 2 else Gender.FEMALE,
+        target_gender=Gender.FEMALE if user_id % 2 else Gender.MALE,
+        age=age,
+        district=district,
+        institution="University",
+        interests=interests or ["music"],
+        bio="Люблю музыку, прогулки и кофе",
+        created_at=datetime(2026, 1, user_id % 28 + 1, tzinfo=UTC),
+    )
 
 
-def test_compute_score_exact_matches():
-    a = DummyProfile(age=20, district="Center", institution="Uni", interests=["music", "sport"])
-    b = DummyProfile(age=21, district="Center", institution="Uni", interests=["music", "sport"])
-    score = RecommendationService.compute_score(a, b)
-    # district (35) + institution (25) + interests Jaccard (1 * 20) + age (~0.8 *20)
-    assert pytest.approx(score, rel=1e-3) == 35 + 25 + 20 + (max(0.0, 1.0 - abs(20 - 21) / 5) * 20)
+class FakeRecommendationRepository:
+    def __init__(self, mine, candidates):
+        self.profiles = {mine.user_id: mine, **{item.user_id: item for item in candidates}}
+        self.candidates = candidates
+        self.views = []
+
+    async def profile(self, user_id):
+        return self.profiles.get(user_id)
+
+    async def eligible_profiles(self, _user_id):
+        return self.candidates
+
+    async def eligible_profile(self, _user_id, candidate_id):
+        return self.profiles.get(candidate_id)
+
+    async def active_profiles(self, _user_id):
+        return self.candidates
+
+    async def record_view(self, viewer_id, candidate_id, score):
+        self.views.append((viewer_id, candidate_id, score))
 
 
-def test_compute_score_no_common_interests():
-    a = DummyProfile(age=30, district="North", institution="College", interests=["cooking"])
-    b = DummyProfile(age=27, district="South", institution="Other", interests=["gaming"]) 
-    score = RecommendationService.compute_score(a, b)
-    # district 0 + institution 0 + interests 0 + age
-    expected_age = max(0.0, 1.0 - abs(30 - 27) / 5) * 20
-    assert pytest.approx(score, rel=1e-3) == expected_age
+class FixedRecommendationStrategy:
+    async def score(self, _viewer, candidate):
+        return float(candidate.user_id)
 
 
-def test_compute_score_empty_interests():
-    a = DummyProfile(age=25, district="A", institution="I", interests=[])
-    b = DummyProfile(age=25, district="A", institution="J", interests=[])
-    score = RecommendationService.compute_score(a, b)
-    # district match (35) + institution 0 + interests 0 + age 20
-    assert pytest.approx(score, rel=1e-3) == 35 + 20
+def service(mine, candidates):
+    result = RecommendationService(None, queue=MemoryRecommendationQueue())
+    result.repo = FakeRecommendationRepository(mine, candidates)
+    return result
+
+
+def test_compute_score_uses_configurable_default_weights():
+    mine = profile(1, age=20)
+    candidate = profile(2, age=21)
+
+    assert RecommendationService.compute_score(mine, candidate) == 99.5
+
+
+def test_weighted_strategy_rejects_invalid_weight_configuration():
+    with pytest.raises(ValueError, match="Неизвестные"):
+        WeightedRecommendationStrategy({"unknown": 1})
+    with pytest.raises(ValueError, match="Сумма"):
+        WeightedRecommendationStrategy({name: 0 for name in WeightedRecommendationStrategy().weights})
+
+
+@pytest.mark.asyncio
+async def test_empty_database_or_one_user_has_no_recommendation():
+    mine = profile(1)
+    engine = service(mine, [])
+
+    assert await engine.next_recommendation(mine.user_id) is None
+
+
+@pytest.mark.asyncio
+async def test_two_users_receive_ranked_recommendation_and_view_event():
+    mine = profile(1)
+    candidate = profile(2)
+    engine = service(mine, [candidate])
+
+    recommendation = await engine.next_recommendation(mine.user_id)
+
+    assert recommendation is not None
+    assert recommendation.profile is candidate
+    assert recommendation.score == 100.0
+    assert engine.repo.views == [(1, 2, 100.0)]
+
+
+@pytest.mark.asyncio
+async def test_engine_accepts_replacement_strategy_without_handler_changes():
+    mine = profile(1)
+    first, second = profile(2), profile(4)
+    engine = RecommendationService(None, queue=MemoryRecommendationQueue(), strategy=FixedRecommendationStrategy())
+    engine.repo = FakeRecommendationRepository(mine, [first, second])
+
+    recommendation = await engine.next_recommendation(mine.user_id)
+
+    assert recommendation is not None
+    assert recommendation.profile is second
+    assert recommendation.score == 4.0
+
+
+@pytest.mark.asyncio
+async def test_stale_queue_entry_is_skipped_without_recursion():
+    mine, candidate = profile(1), profile(2)
+    engine = service(mine, [candidate])
+    engine.queue.replace(1, [QueueEntry(999, 99), QueueEntry(candidate.user_id, 90)])
+
+    recommendation = await engine.next_recommendation(1)
+
+    assert recommendation is not None
+    assert recommendation.profile is candidate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidate_count", [10, 100])
+async def test_ten_and_hundred_candidates_are_sorted_without_duplicates(candidate_count):
+    mine = profile(1)
+    candidates = [
+        profile(number, age=20 + number % 20, district="Center" if number % 3 else "North")
+        for number in range(2, candidate_count + 2)
+    ]
+    for candidate in candidates:
+        candidate.gender = Gender.FEMALE
+        candidate.target_gender = Gender.MALE
+    engine = service(mine, candidates)
+
+    assert await engine.rebuild_queue(mine.user_id) == candidate_count
+    delivered = []
+    for _ in candidates:
+        recommendation = await engine.next_recommendation(mine.user_id)
+        assert recommendation is not None
+        delivered.append(recommendation.profile.user_id)
+
+    assert len(delivered) == candidate_count
+    assert len(set(delivered)) == candidate_count
+    assert delivered[0] == 4
+
+
+@pytest.mark.asyncio
+async def test_skip_moves_profile_to_end_of_current_queue():
+    mine = profile(1)
+    first, second, third = profile(2), profile(4, age=35), profile(6, age=38)
+    engine = service(mine, [first, second, third])
+
+    await engine.rebuild_queue(1)
+    await engine.skip(1, first.user_id)
+    delivered = [
+        (await engine.next_recommendation(1)).profile.user_id,
+        (await engine.next_recommendation(1)).profile.user_id,
+        (await engine.next_recommendation(1)).profile.user_id,
+    ]
+
+    assert delivered[-1] == first.user_id
+
+
+def test_incompatible_gender_is_not_eligible_for_queue():
+    mine, candidate = profile(1), profile(3)
+    candidate.gender = Gender.MALE
+    engine = service(mine, [candidate])
+
+    assert not engine.is_compatible(mine, candidate)
+
+
+@pytest.mark.asyncio
+async def test_paused_or_blocked_profiles_are_not_delivered_when_repository_excludes_them():
+    mine = profile(1)
+    engine = service(mine, [])
+
+    assert await engine.rebuild_queue(mine.user_id) == 0
+    assert await engine.next_recommendation(mine.user_id) is None

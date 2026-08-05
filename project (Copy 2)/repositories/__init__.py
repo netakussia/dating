@@ -1,7 +1,0 @@
-from repositories.confession import ConfessionRepository
-from repositories.appeal import AppealRepository
-from repositories.discovery import DiscoveryRepository
-from repositories.like import LikeRepository
-from repositories.profile import ProfileRepository
-from repositories.report import ReportRepository
-from repositories.user import UserRepository
