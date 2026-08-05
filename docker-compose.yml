@@ -3,6 +3,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ${PHOTO_SAFETY_MODELS_DIR:-./models}:/models:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

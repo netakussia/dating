@@ -1,5 +1,6 @@
-from validators.profile_validator import ProfileValidationError, validate_profile_payload
 from services.interest_normalizer import normalize_interests
+from utils.profile_media import ordered_photo_ids
+from validators.profile_validator import ProfileValidationError, validate_profile_payload
 
 
 def test_validate_profile_payload_rejects_bad_name_and_age():
@@ -51,3 +52,13 @@ def test_validate_profile_payload_rejects_invalid_gender_values():
         assert "target_gender" in exc.errors
     else:
         raise AssertionError("Expected validation to fail")
+
+
+def test_main_photo_is_rendered_first_in_gallery():
+    profile = type(
+        "Profile",
+        (),
+        {"photo_file_ids": ["one", "two", "three"], "main_photo_file_id": "two", "photo_file_id": "one"},
+    )()
+
+    assert ordered_photo_ids(profile) == ["two", "one", "three"]

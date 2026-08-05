@@ -46,6 +46,10 @@ async def run() -> None:
         """))
         await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS verification_status verificationstatus NOT NULL DEFAULT 'UNVERIFIED'"))
         await connection.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS moderation_status moderationstatus NOT NULL DEFAULT 'CLEAR'"))
+        await connection.execute(text("ALTER TABLE photo_moderations ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)"))
+        await connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_photo_moderations_content_hash ON photo_moderations (content_hash)")
+        )
         await connection.execute(text("ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS target_type VARCHAR(32)"))
         await connection.execute(text("ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS target_id VARCHAR(64)"))
         await connection.execute(text("ALTER TABLE admin_logs ADD COLUMN IF NOT EXISTS metadata_json JSON NOT NULL DEFAULT '{}'"))

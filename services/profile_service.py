@@ -24,7 +24,7 @@ class ProfileService:
     def _sync_photo_state(self, profile: Profile, photo_ids: list[str]) -> None:
         normalized = list(dict.fromkeys(photo_ids))[:3]
         profile.photo_file_ids = normalized
-        profile.extra_data = {"photo_file_ids": normalized}
+        profile.extra_data = {**(profile.extra_data or {}), "photo_file_ids": normalized}
         profile.photo_file_id = normalized[0] if normalized else ""
         profile.main_photo_file_id = normalized[0] if normalized else None
 
@@ -43,7 +43,9 @@ class ProfileService:
             self.session.add(profile)
 
         profile.gender = Gender(payload["gender"]) if payload.get("gender") else profile.gender
-        profile.target_gender = Gender(payload["target_gender"]) if payload.get("target_gender") else profile.target_gender
+        profile.target_gender = (
+            Gender(payload["target_gender"]) if payload.get("target_gender") else profile.target_gender
+        )
         profile.name = str(payload.get("name") or "").strip()
         profile.age = int(payload.get("age"))
         profile.district = str(payload.get("district") or "").strip()
@@ -65,7 +67,6 @@ class ProfileService:
         if profile is None:
             raise ValueError("Profile does not exist")
         profile.is_visible = False
-        profile.moderation_locked = True
         await self.repo.save(profile)
         return profile
 
@@ -103,6 +104,35 @@ class ProfileService:
         photo_ids = list((profile.extra_data or {}).get("photo_file_ids", list(profile.photo_file_ids or [])))
         if photo_file_id in photo_ids:
             photo_ids.remove(photo_file_id)
+        self._sync_photo_state(profile, photo_ids)
+        await self.repo.save(profile)
+        return profile
+
+    async def move_photo(self, user_id: int, photo_file_id: str, direction: int) -> Profile:
+        profile = await self.get_profile(user_id)
+        if profile is None:
+            raise ValueError("Profile does not exist")
+        photo_ids = list(profile.photo_file_ids or [])
+        index = photo_ids.index(photo_file_id)
+        target = index + direction
+        if not 0 <= target < len(photo_ids):
+            return profile
+        photo_ids[index], photo_ids[target] = photo_ids[target], photo_ids[index]
+        self._sync_photo_state(profile, photo_ids)
+        await self.repo.save(profile)
+        return profile
+
+    async def replace_photo(self, user_id: int, old_file_id: str, new_file_id: str) -> Profile:
+        profile = await self.get_profile(user_id)
+        if profile is None:
+            raise ValueError("Profile does not exist")
+        photo_ids = list(profile.photo_file_ids or [])
+        if new_file_id == old_file_id:
+            return profile
+        if new_file_id in photo_ids:
+            photo_ids.remove(new_file_id)
+        index = photo_ids.index(old_file_id)
+        photo_ids[index] = new_file_id
         self._sync_photo_state(profile, photo_ids)
         await self.repo.save(profile)
         return profile

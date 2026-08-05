@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Block, Like, Profile, RecommendationView, User, UserStatus
+from models import Block, Like, ModerationStatus, Profile, RecommendationView, User, UserStatus
 
 
 class RecommendationRepository:
@@ -22,6 +22,7 @@ class RecommendationRepository:
                 Profile.user_id != user_id,
                 Profile.is_visible.is_(True),
                 Profile.moderation_locked.is_(False),
+                Profile.moderation_status == ModerationStatus.CLEAR,
                 User.status == UserStatus.ACTIVE,
                 Profile.user_id.not_in(liked_ids),
                 Profile.user_id.not_in(blocked_by_me),
@@ -42,6 +43,7 @@ class RecommendationRepository:
                 Profile.user_id != user_id,
                 Profile.is_visible.is_(True),
                 Profile.moderation_locked.is_(False),
+                Profile.moderation_status == ModerationStatus.CLEAR,
                 User.status == UserStatus.ACTIVE,
                 Profile.user_id.not_in(liked_ids),
                 Profile.user_id.not_in(blocked_by_me),
@@ -60,6 +62,7 @@ class RecommendationRepository:
                 Profile.user_id != user_id,
                 Profile.is_visible.is_(True),
                 Profile.moderation_locked.is_(False),
+                Profile.moderation_status == ModerationStatus.CLEAR,
                 User.status == UserStatus.ACTIVE,
                 Profile.user_id.not_in(blocked_by_me),
                 Profile.user_id.not_in(blocked_me),

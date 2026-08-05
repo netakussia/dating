@@ -11,8 +11,8 @@ from dtos.profile_dto import ProfileDraft
 from keyboards.dating import choice_keyboard
 from keyboards.profile import registration_preview_keyboard
 from services.localization import LocalizationService
+from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.profile_service import ProfileService
-from services.photo_moderation_service import PhotoModerationService
 from states.registration import RegistrationState
 from validators.profile_validator import ProfileValidationError
 
@@ -89,7 +89,9 @@ async def _show_step(message: Message | CallbackQuery, state: FSMContext, step: 
         await _set_step(state, "target_gender")
         await message.answer(
             localizer.get("registration_step_target_gender", locale=locale),
-            reply_markup=choice_keyboard("reg_target", [("Парней", "MALE"), ("Девушек", "FEMALE"), ("Не важно", "ALL")]),
+            reply_markup=choice_keyboard(
+                "reg_target", [("Парней", "MALE"), ("Девушек", "FEMALE"), ("Не важно", "ALL")]
+            ),
         )
     elif step == "name":
         await _set_step(state, "name")
@@ -131,12 +133,16 @@ async def _render_preview(message: Message | CallbackQuery, state: FSMContext) -
     if photo_ids:
         await message.answer_photo(photo_ids[0], caption=caption, reply_markup=registration_preview_keyboard())
     else:
-        await message.answer(localizer.get("registration_step_preview", locale=locale), reply_markup=registration_preview_keyboard())
+        await message.answer(
+            localizer.get("registration_step_preview", locale=locale), reply_markup=registration_preview_keyboard()
+        )
         await message.answer(caption)
 
 
-async def start_registration(message: Message, state: FSMContext, *, edit: bool = False) -> None:
-    draft = await _get_draft(state)
+async def start_registration(
+    message: Message, state: FSMContext, *, edit: bool = False, initial_draft: dict[str, Any] | None = None
+) -> None:
+    draft = initial_draft or await _get_draft(state)
     draft.setdefault("locale", _language_code(message))
     draft.setdefault("is_visible", True)
     draft.setdefault("photo_file_ids", [])
@@ -175,9 +181,32 @@ async def _go_to_next_step(state: FSMContext) -> str:
 
 
 @router.callback_query(F.data == "profile:edit")
-async def edit_profile(callback: CallbackQuery, state: FSMContext) -> None:
+async def edit_profile(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     await callback.answer()
-    await start_registration(callback.message, state, edit=True)
+    profile = await ProfileService(session).get_profile(callback.from_user.id)
+    if profile is None:
+        await start_registration(callback.message, state)
+        return
+    await start_registration(
+        callback.message,
+        state,
+        edit=True,
+        initial_draft={
+            "gender": profile.gender.value,
+            "target_gender": profile.target_gender.value,
+            "name": profile.name,
+            "age": profile.age,
+            "district": profile.district,
+            "institution": profile.institution,
+            "interests": profile.interests,
+            "bio": profile.bio,
+            "photo_file_ids": list(profile.photo_file_ids or []),
+            "main_photo_file_id": profile.main_photo_file_id,
+            "locale": profile.locale,
+            "is_visible": profile.is_visible,
+            "extra_data": profile.extra_data or {},
+        },
+    )
 
 
 @router.callback_query(RegistrationState.gender, F.data.startswith("reg_gender:"))
@@ -319,12 +348,24 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
         await callback.answer("Данные анкеты не прошли проверку", show_alert=True)
         return
     flagged_no_face = False
-    photo_moderation = PhotoModerationService(session, nsfw_threshold=settings.nsfw_threshold)
-    for photo_file_id in payload.photo_file_ids:
-        assessment = await photo_moderation.inspect(callback.from_user.id, photo_file_id)
-        flagged_no_face = flagged_no_face or not assessment.face_detected
+    flagged_nsfw = False
+    photo_moderation = PhotoModerationService(
+        session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=callback.bot
+    )
+    try:
+        for photo_file_id in payload.photo_file_ids:
+            assessment = await photo_moderation.inspect(callback.from_user.id, photo_file_id)
+            flagged_no_face = flagged_no_face or not assessment.face_detected
+            flagged_nsfw = flagged_nsfw or assessment.nsfw_score >= settings.nsfw_threshold
+    except PhotoModerationError:
+        await state.clear()
+        await callback.message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
+        await callback.answer()
+        return
     await state.clear()
-    if flagged_no_face:
+    if flagged_nsfw:
+        await callback.message.answer("⚠️ Фото отправлено на проверку модераторам. До решения анкета не показывается.")
+    elif flagged_no_face:
         await callback.message.answer("⚠️ На фото не найдено лицо. Замените фотографию; анкета отправлена на проверку.")
     else:
         await callback.message.answer("✅ Анкета опубликована.")

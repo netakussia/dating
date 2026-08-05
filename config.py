@@ -1,5 +1,6 @@
 import json
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,13 @@ class Settings(BaseSettings):
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
     log_level: str = "INFO"
     nsfw_threshold: float = 0.85
+    photo_safety_provider: Literal["ml", "heuristic", "disabled"] = "heuristic"
+    nsfw_model_path: str = "/models/open_nsfw.onnx"
+    face_model_path: str = "/models/face_detection_yunet_2023mar.onnx"
+    face_detection_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    photo_safety_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
+    photo_safety_max_pixels: int = Field(default=20_000_000, ge=1)
+    photo_safety_min_dimension: int = Field(default=64, ge=1)
     matching_weights_raw: str = Field(default="", alias="MATCHING_WEIGHTS_JSON")
     report_threshold: int = Field(default=3, ge=1, alias="REPORT_THRESHOLD")
 

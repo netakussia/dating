@@ -64,12 +64,34 @@ class TrustRepository:
             query = query.where(ModerationCase.case_type == case_type)
         return list((await self.session.scalars(query.order_by(ModerationCase.created_at))).all())
 
+    async def photo_by_hash(self, content_hash: str) -> PhotoModeration | None:
+        return await self.session.scalar(
+            select(PhotoModeration)
+            .where(PhotoModeration.content_hash == content_hash)
+            .order_by(PhotoModeration.created_at)
+        )
+
     async def record_photo(
-        self, user_id: int, photo_file_id: str, provider: str, nsfw_score: float, face_detected: bool
+        self,
+        user_id: int,
+        photo_file_id: str,
+        provider: str,
+        nsfw_score: float,
+        face_detected: bool,
+        content_hash: str | None = None,
     ) -> PhotoModeration:
+        if content_hash:
+            existing = await self.session.scalar(
+                select(PhotoModeration).where(
+                    PhotoModeration.user_id == user_id, PhotoModeration.content_hash == content_hash
+                )
+            )
+            if existing:
+                return existing
         item = PhotoModeration(
             user_id=user_id,
             photo_file_id=photo_file_id,
+            content_hash=content_hash,
             provider=provider,
             nsfw_score=nsfw_score,
             face_detected=face_detected,

@@ -6,13 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from keyboards.dating import dating_keyboard, report_reasons_keyboard
 from models import ReportReason
 from repositories.discovery import DiscoveryRepository
-from services.report_service import ReportService
 from services.like_service import LikeService
 from services.match_service import MatchService
 from services.notification_service import NotificationService
 from services.recommendation import RecommendationService
+from services.report_service import ReportService
 from states.dating import DatingState
 from utils.contacts import telegram_contact
+from utils.profile_media import send_profile_gallery
 
 router = Router()
 
@@ -33,8 +34,10 @@ async def show_next(message: Message, user_id: int, session: AsyncSession, setti
         return
     p = recommendation.profile
     caption = f"{p.name}, {p.age}\n📍 {p.district}\n🏫 {p.institution}\n🎯 {', '.join(p.interests)}\n\n{p.bio}"
+    if p.verification_status.value == "VERIFIED":
+        caption += "\n\n🟢 Проверенный профиль"
     caption += f"\n\n❤️ Совместимость: {round(recommendation.score)}%"
-    await message.answer_photo(p.photo_file_id, caption=caption, reply_markup=dating_keyboard(p.user_id))
+    await send_profile_gallery(message, p, caption, dating_keyboard(p.user_id))
 
 
 @router.message(F.text.in_({"💘 Знакомства", "💘 Смотреть анкеты", "Смотреть анкеты"}))

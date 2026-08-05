@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import BigInteger, Enum, Float, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Enum, Float, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base, TimestampMixin, UUIDPKMixin
@@ -49,8 +49,10 @@ class ModerationCase(UUIDPKMixin, TimestampMixin, Base):
 
 class PhotoModeration(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "photo_moderations"
+    __table_args__ = (UniqueConstraint("user_id", "content_hash", name="uq_photo_moderations_user_hash"),)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     photo_file_id: Mapped[str] = mapped_column(String(255), index=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     provider: Mapped[str] = mapped_column(String(64), default="heuristic")
     nsfw_score: Mapped[float] = mapped_column(Float, default=0.0)
     face_detected: Mapped[bool] = mapped_column(default=True)

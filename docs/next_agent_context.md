@@ -8,6 +8,8 @@
 - Recommendation Engine строит совместимую выборку в SQL, ранжирует её стратегией и записывает показы. Лайк/пропуск/жалоба обновляют очередь; блокировка исключается в обоих направлениях.
 - Like Engine и Match Engine используют уникальные пары и savepoint, поэтому создание лайка и матча идемпотентно.
 - Trust System: Video Note verification, уникальные жалобы, автоматический Under Review, апелляции, Trust Score, аудит модераторов и очереди NSFW/лица. Высокий NSFW score скрывает анкету до решения.
+- Единый `ProfileRequiredMiddleware` защищает знакомства, симпатии, верификацию и действия с карточками: пользователь без анкеты получает CTA «✨ Создать анкету».
+- Карточки анкет и «Моя анкета» выводят все фото (MediaGroup); первая в порядке — главная. В профиле есть управление добавлением, заменой, удалением и перестановкой до трёх фото.
 - Redis используется для FSM и rate limit. `MemoryRecommendationQueue` является текущим single-process адаптером.
 
 ## Добавленные и расширенные таблицы
@@ -41,7 +43,8 @@
 - Eligibility (visibility, active status, likes, двусторонние блоки) остаётся SQL-обязанностью; стратегия отвечает только за score. ML/AI не должен обходить этот фильтр.
 - Веса matching меняются через `MATCHING_WEIGHTS_JSON`; неизвестные/отрицательные значения отклоняются, нулевые допустимы при положительной сумме.
 - Внутренний Trust Score хранится вместе с неизменяемым журналом событий; действия модератора пишутся в `AdminLog`.
-- NSFW/face — сменяемый provider-контракт, текущий dependency-free provider годится только для разработки.
+- Photo safety: `PHOTO_SAFETY_PROVIDER=ml|heuristic|disabled`. `ml` использует локальные OpenNSFW-compatible ONNX и YuNet; нормализованный SHA-256 кэширует решение и исключает повторный ML inference. Модели монтируются в контейнер, не скачиваются и не вызывают cloud API.
+- При ошибке `PhotoSafetyProvider`, загрузки или декодирования изображения применяется fail-closed policy: результат ошибки записывается, анкета скрывается и создаётся кейс ручной модерации. `UNDER_REVIEW` дополнительно исключён из SQL-выборки рекомендаций.
 
 ## Потенциальные проблемы
 
@@ -62,4 +65,4 @@
 
 ## Следующий рекомендуемый модуль
 
-Production hardening: Alembic baseline и удаление inline schema changes, Redis-backed recommendation queue, атомарный счётчик жалоб, реальный локальный NSFW/face provider, outbox для уведомлений, retention/observability и PostgreSQL/Redis integration + load tests.
+Production hardening: Alembic baseline и удаление inline schema changes, Redis-backed recommendation queue, атомарный счётчик жалоб, фоновая очередь и observability локального photo ML, outbox для уведомлений, retention и PostgreSQL/Redis integration + load tests.

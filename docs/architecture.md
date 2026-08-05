@@ -12,7 +12,7 @@
 
 Recommendation layer разделён на три контракта: `RecommendationStrategy` оценивает кандидата, `RecommendationQueue` управляет временной очередью, `RecommendationRepository` выполняет SQL-фильтры и записывает просмотры. `RecommendationService` координирует их, но не знает деталей будущей ML/Redis реализации.
 
-Trust System использует те же слои: handlers вызывают независимые `VerificationService`, `ReportService`, `ModerationService`, `PhotoModerationService`, `TrustScoreService` и `TrustStatsService`; SQL и журнал аудита находятся в `TrustRepository`. Рейтинг доступен исключительно внутренним алгоритмам.
+Trust System использует те же слои: handlers вызывают независимые `VerificationService`, `ReportService`, `ModerationService`, `PhotoModerationService`, `TrustScoreService` и `TrustStatsService`; SQL и журнал аудита находятся в `TrustRepository`. Рейтинг доступен исключительно внутренним алгоритмам. Анкеты `UNDER_REVIEW` исключаются на уровне SQL в `RecommendationRepository`; при ошибке provider проверки фото анкета скрывается до ручного решения.
 
 ## Запуск
 Точка входа — main.py. При запуске:
@@ -45,7 +45,7 @@ Trust System использует те же слои: handlers вызывают 
 - UI-тексты не полностью вынесены в отдельный слой локализации.
 - Часть логики всё ещё находится в обработчиках, особенно в сценариях FSM.
 - Схема базы обновляется частично через inline SQL, а не через полноценную историю миграций.
-- По умолчанию проверка фото использует dependency-free адаптер; контракт `PhotoSafetyProvider` позволяет подключить локальную ONNX/OpenCV-модель или внешний провайдер без изменения сценариев.
+- Проверка фото выбирается конфигурацией через `PhotoSafetyProvider`: локальный ONNX/OpenCV ML-провайдер, development heuristic или явный disabled. В ML-режиме изображение нормализуется и хэшируется до inference, поэтому повторная проверка не запускает модель; ошибка любой стадии fail-closed отправляет анкету в ручную модерацию.
 - Memory queue пригодна только для одного процесса; для горизонтального масштабирования необходим Redis-адаптер с атомарными операциями.
 - Обёртка savepoint защищает конкурентные Like/Match, но полноценное управление транзакциями и retry-политика ещё не выделены в отдельный слой.
 - Текущий контракт ранжирования по одному кандидату не оптимален для внешних/batch ML-моделей.
