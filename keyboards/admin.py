@@ -1,4 +1,6 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
 def admin_keyboard():
     kb = InlineKeyboardBuilder()
     kb.button(text="🛡 Trust: верификации", callback_data="admin:verifications")
@@ -24,8 +26,8 @@ def verification_keyboard(request_id: str):
 
 def case_keyboard(case_id: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Закрыть", callback_data=f"case:close:{case_id}")
     kb.button(text="↩️ Разрешить фото", callback_data=f"case:restore:{case_id}")
+    kb.button(text="📝 Попросить заменить", callback_data=f"case:retake:{case_id}")
     kb.adjust(1)
     return kb.as_markup()
 

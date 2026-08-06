@@ -71,6 +71,14 @@ class TrustRepository:
             .order_by(PhotoModeration.created_at)
         )
 
+    async def photo_for_case(self, user_id: int, source_id: str | None) -> PhotoModeration | None:
+        query = select(PhotoModeration).where(PhotoModeration.user_id == user_id)
+        if source_id:
+            query = query.where(
+                (PhotoModeration.content_hash == source_id) | (PhotoModeration.photo_file_id == source_id)
+            )
+        return await self.session.scalar(query.order_by(PhotoModeration.created_at.desc()))
+
     async def record_photo(
         self,
         user_id: int,

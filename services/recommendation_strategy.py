@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping
+from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
 
 from models import Gender, Profile
@@ -15,6 +19,41 @@ DEFAULT_MATCHING_WEIGHTS: dict[str, float] = {
     "interests": 7.0,
     "bio": 3.0,
 }
+
+
+def _normalize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKD", value.strip().casefold())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).strip()
+
+
+@lru_cache(maxsize=1)
+def _load_aliases() -> dict[str, str]:
+    aliases_path = Path(__file__).resolve().parent.parent / "data" / "normalization_aliases.json"
+    if not aliases_path.exists():
+        return {}
+    with aliases_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    mapping: dict[str, str] = {}
+    for canonical, variants in payload.get("districts", {}).items():
+        canonical_normalized = _normalize_text(canonical)
+        mapping[canonical_normalized] = canonical_normalized
+        for variant in variants:
+            mapping[_normalize_text(str(variant))] = canonical_normalized
+    for canonical, variants in payload.get("institutions", {}).items():
+        canonical_normalized = _normalize_text(canonical)
+        mapping[canonical_normalized] = canonical_normalized
+        for variant in variants:
+            mapping[_normalize_text(str(variant))] = canonical_normalized
+    return mapping
+
+
+def _normalize_match_text(value: str) -> str:
+    normalized = _normalize_text(value)
+    return _load_aliases().get(normalized, normalized)
 
 
 class RecommendationStrategy(Protocol):
@@ -63,7 +102,7 @@ class WeightedRecommendationStrategy:
 
     @staticmethod
     def _text_match(first: str, second: str) -> float:
-        return 1.0 if first.strip().casefold() == second.strip().casefold() else 0.0
+        return 1.0 if _normalize_match_text(first) == _normalize_match_text(second) else 0.0
 
     @staticmethod
     def _tokens(value: str) -> list[str]:

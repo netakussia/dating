@@ -14,7 +14,9 @@ router = Router()
 @router.message(F.text == "🛡 Верификация")
 async def verification_start(message: Message, state: FSMContext) -> None:
     await state.set_state(VerificationState.waiting_video)
-    await message.answer("Отправьте короткое видеосообщение-кружок. Его увидят только модераторы.")
+    await message.answer(
+        "🛡 Верификация\nОтправьте короткое видеосообщение-кружок — модераторы увидят его только для проверки."
+    )
 
 
 @router.message(VerificationState.waiting_video, F.video_note)
@@ -26,9 +28,11 @@ async def verification_video(message: Message, state: FSMContext, session: Async
         await notifier.safe_send(
             admin_id, f"🛡 Новая верификация #{request.id}; пользователь <code>{request.user_id}</code>"
         )
-    await message.answer("✅ Кружок отправлен на проверку. Статус анкеты пока: непроверенный.")
+    await message.answer(
+        "✅ Видеокружок отправлен на проверку. Статус анкеты пока: непроверенный."
+    )
 
 
 @router.message(VerificationState.waiting_video)
 async def verification_not_video(message: Message) -> None:
-    await message.answer("Нужно отправить именно видеосообщение-кружок.")
+    await message.answer("⚠️ Нужно отправить именно видеосообщение-кружок.")

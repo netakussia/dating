@@ -13,7 +13,7 @@ class ModerationService:
         self.repo = TrustRepository(session)
 
     async def resolve_case(
-        self, case_id: uuid.UUID, admin_id: int, *, restore: bool = False
+        self, case_id: uuid.UUID, admin_id: int, *, restore: bool = False, retake: bool = False
     ) -> tuple[object | None, bool]:
         case = await self.repo.case(case_id)
         if case is None or case.status != ModerationCaseStatus.PENDING:
@@ -25,12 +25,15 @@ class ModerationService:
             if restore:
                 profile.moderation_locked = False
                 profile.is_visible = True
+            elif retake:
+                profile.moderation_locked = False
+                profile.is_visible = False
         await self.repo.log(
             admin_id,
             "moderation_case_resolved",
             target_type="case",
             target_id=str(case.id),
-            metadata={"restore": restore},
+            metadata={"restore": restore, "retake": retake},
         )
         await self.session.flush()
         return case, True

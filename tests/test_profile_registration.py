@@ -34,6 +34,21 @@ def test_normalize_interests_maps_popular_categories():
     assert len(normalized) >= 4
 
 
+def test_normalize_interests_splits_comma_separated_values_in_list():
+    normalized = normalize_interests(["Music, sport, movie"])
+
+    assert "music" in normalized
+    assert "sport" in normalized
+    assert "cinema" in normalized
+    assert len(normalized) == 3
+
+
+def test_format_interests_returns_hashtag_style_text():
+    from services.interest_normalizer import format_interests
+
+    assert format_interests(["music", "sport"]) == "#Music #Sport"
+
+
 def test_validate_profile_payload_rejects_invalid_gender_values():
     payload = {
         "name": "Аня",

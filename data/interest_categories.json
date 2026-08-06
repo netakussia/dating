@@ -1,10 +1,10 @@
 {
   "categories": [
-    {"key": "music", "label": "🎧 Люблю музыку", "aliases": ["music", "музыка", "muzica", "spotify", "рок", "рэп", "гитара", "rock", "rap", "song"]},
-    {"key": "sport", "label": "🏃 Спорт", "aliases": ["sport", "спорт", "fitness", "фитнес", "run", "gym", "football", "basketball", "tennis"]},
+    {"key": "music", "label": "🎧 Люблю музыку", "aliases": ["music", "музыка", "muzica", "muzică", "spotify", "рок", "рэп", "гитара", "rock", "rap", "song", "hip hop", "hip-hop", "hiphop"]},
+    {"key": "sport", "label": "🏃 Спорт", "aliases": ["sport", "спорт", "fitness", "фитнес", "run", "gym", "football", "basketball", "tennis", "зал", "тренажёрка"]},
     {"key": "cinema", "label": "🎬 Кино", "aliases": ["cinema", "кино", "movie", "movies", "film", "films"]},
     {"key": "anime", "label": "🌸 Аниме", "aliases": ["anime", "аниме", "manga"]},
-    {"key": "programming", "label": "💻 Программирование", "aliases": ["programming", "программирование", "code", "coding", "dev", "python", "java", "javascript"]},
+    {"key": "programming", "label": "💻 Программирование", "aliases": ["programming", "программирование", "code", "coding", "dev", "python", "java", "javascript", "it", "айти", "cybersecurity", "linux", "network"]},
     {"key": "games", "label": "🎮 Игры", "aliases": ["games", "игры", "game", "gamer", "gaming", "csgo", "minecraft"]},
     {"key": "books", "label": "📚 Книги", "aliases": ["books", "книги", "book", "reading", "literature"]},
     {"key": "cars", "label": "🚗 Автомобили", "aliases": ["cars", "машины", "авто", "car", "automotive"]},

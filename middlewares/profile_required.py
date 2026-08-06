@@ -13,7 +13,9 @@ class ProfileRequiredMiddleware(BaseMiddleware):
     """Stops profile-only actions in one place and offers registration."""
 
     message_actions = {
-        "💘 Знакомства", "💘 Смотреть анкеты", "Смотреть анкеты", "❤️ Симпатии", "💕 Мои симпатии", "🛡 Верификация"
+        "💘 Знакомства", "💘 Смотреть анкеты", "Смотреть анкеты",
+        "💕 Мои симпатии", "❤️ Симпатии",
+        "🛡 Верификация", "💌 Признание"
     }
     callback_prefixes = (
         "like:", "comment:", "skip:", "block:", "report:", "report_reason:",

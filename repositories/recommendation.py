@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Block, Like, ModerationStatus, Profile, RecommendationView, User, UserStatus
+from models import Block, Dislike, Like, ModerationStatus, Profile, RecommendationView, User, UserStatus
 
 
 class RecommendationRepository:
@@ -13,8 +13,10 @@ class RecommendationRepository:
 
     async def eligible_profiles(self, user_id: int) -> list[Profile]:
         liked_ids = select(Like.to_user_id).where(Like.from_user_id == user_id)
+        disliked_ids = select(Dislike.to_user_id).where(Dislike.from_user_id == user_id)
         blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == user_id)
         blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
+        viewed_ids = select(RecommendationView.candidate_id).where(RecommendationView.viewer_id == user_id)
         statement = (
             select(Profile)
             .join(User)
@@ -25,16 +27,20 @@ class RecommendationRepository:
                 Profile.moderation_status == ModerationStatus.CLEAR,
                 User.status == UserStatus.ACTIVE,
                 Profile.user_id.not_in(liked_ids),
+                Profile.user_id.not_in(disliked_ids),
                 Profile.user_id.not_in(blocked_by_me),
                 Profile.user_id.not_in(blocked_me),
+                Profile.user_id.not_in(viewed_ids),
             )
         )
         return list((await self.session.scalars(statement)).all())
 
     async def eligible_profile(self, user_id: int, candidate_id: int) -> Profile | None:
         liked_ids = select(Like.to_user_id).where(Like.from_user_id == user_id)
+        disliked_ids = select(Dislike.to_user_id).where(Dislike.from_user_id == user_id)
         blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == user_id)
         blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
+        viewed_ids = select(RecommendationView.candidate_id).where(RecommendationView.viewer_id == user_id)
         statement = (
             select(Profile)
             .join(User)
@@ -46,13 +52,16 @@ class RecommendationRepository:
                 Profile.moderation_status == ModerationStatus.CLEAR,
                 User.status == UserStatus.ACTIVE,
                 Profile.user_id.not_in(liked_ids),
+                Profile.user_id.not_in(disliked_ids),
                 Profile.user_id.not_in(blocked_by_me),
                 Profile.user_id.not_in(blocked_me),
+                Profile.user_id.not_in(viewed_ids),
             )
         )
         return await self.session.scalar(statement)
 
     async def active_profiles(self, user_id: int) -> list[Profile]:
+        disliked_ids = select(Dislike.to_user_id).where(Dislike.from_user_id == user_id)
         blocked_by_me = select(Block.blocked_id).where(Block.blocker_id == user_id)
         blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
         statement = (
@@ -64,6 +73,7 @@ class RecommendationRepository:
                 Profile.moderation_locked.is_(False),
                 Profile.moderation_status == ModerationStatus.CLEAR,
                 User.status == UserStatus.ACTIVE,
+                Profile.user_id.not_in(disliked_ids),
                 Profile.user_id.not_in(blocked_by_me),
                 Profile.user_id.not_in(blocked_me),
             )

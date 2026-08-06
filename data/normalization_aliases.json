@@ -1,0 +1,59 @@
+{
+  "districts": {
+    "beltsy": [
+      "бельцы",
+      "бэлць",
+      "balti",
+      "bălți",
+      "balți",
+      "balti md",
+      "mun. balti",
+      "бэлци",
+      "beltsy",
+      "belți"
+    ],
+    "центр": [
+      "center",
+      "centru",
+      "ctr",
+      "centr",
+      "цент",
+      "centre"
+    ],
+    "пэмынтэны": [
+      "pământeni",
+      "pemanteni",
+      "пэмынтэны"
+    ]
+  },
+  "institutions": {
+    "colegiul politehnic": [
+      "cpb",
+      "колледж политехник",
+      "политех",
+      "colegiul politehnic",
+      "c.p.b."
+    ],
+    "usarb": [
+      "aleccu russo",
+      "alecu russo",
+      "usarb",
+      "universitatea alecu russo",
+      "universitatea de stat alecu russo"
+    ],
+    "draxlmaier": [
+      "dräxlmaier",
+      "drăxlmaier",
+      "drexlaier",
+      "дрэксельмайер",
+      "draxlmaier"
+    ],
+    "gebauer": [
+      "gg",
+      "gebauer"
+    ],
+    "sebn": [
+      "sebn"
+    ]
+  }
+}

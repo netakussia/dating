@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import Settings
 from keyboards.admin import admin_keyboard, appeal_keyboard, case_keyboard, moderation_keyboard, verification_keyboard
-from models import AppealStatus, ModerationCaseType, ReportStatus, User, UserStatus, VerificationDecision
+from models import AppealStatus, ModerationCaseType, ModerationStatus, ReportStatus, User, UserStatus, VerificationDecision
 from repositories.appeal import AppealRepository
 from repositories.profile import ProfileRepository
 from repositories.report import ReportRepository
@@ -142,8 +142,17 @@ async def nsfw_queue(callback: CallbackQuery, session: AsyncSession, settings: S
         await callback.message.answer("Очередь NSFW/фото пуста.")
     else:
         item = items[0]
+        photo = await TrustRepository(session).photo_for_case(item.user_id, item.source_id)
+        caption = (
+            f"🔞 Фото-проверка #{item.id}\nПользователь: <code>{item.user_id}</code>\n"
+            f"Тип: {item.case_type.value}\n{item.details or ''}"
+        )
+        if photo:
+            await callback.message.answer_photo(photo.photo_file_id, caption=caption)
+        else:
+            await callback.message.answer(caption + "\n\n⚠️ Исходное фото недоступно; проверьте детали кейса.")
         await callback.message.answer(
-            f"🔞 Фото-проверка #{item.id}\nПользователь: <code>{item.user_id}</code>\n{item.details or ''}",
+            "Выберите решение для этой фотографии:",
             reply_markup=case_keyboard(str(item.id)),
         )
     await callback.answer()
@@ -174,12 +183,22 @@ async def moderation_case(callback: CallbackQuery, session: AsyncSession, settin
         await callback.answer("Некорректный кейс", show_alert=True)
         return
     case, changed = await ModerationService(session).resolve_case(
-        case_id, callback.from_user.id, restore=action == "restore"
+        case_id, callback.from_user.id, restore=action == "restore", retake=action in {"retake", "close"}
     )
     if not changed:
         await callback.answer("Кейс уже закрыт", show_alert=True)
         return
-    await callback.message.edit_text("✅ Фото-проверка закрыта.")
+    if action == "restore":
+        user_message = "✅ Фото одобрено. Ваша анкета снова видна в знакомствах."
+        result = "✅ Фото одобрено, анкета восстановлена."
+    else:
+        user_message = (
+            "📝 Фото нужно заменить. Откройте «Моя анкета» → «Управлять фото», "
+            "загрузите новое фото и включите видимость анкеты."
+        )
+        result = "📝 Пользователю отправлен запрос на замену фотографии."
+    await NotificationService(callback.bot).safe_send(case.user_id, user_message)
+    await callback.message.edit_text(result)
     await callback.answer()
 
 
@@ -290,6 +309,7 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
             user.status = UserStatus.ACTIVE
         if profile:
             profile.moderation_locked = False
+            profile.moderation_status = ModerationStatus.CLEAR
         await repo.resolve(appeal_id, AppealStatus.RESOLVED, callback.from_user.id)
         await TrustRepository(session).log(
             callback.from_user.id, "appeal_restored", target_type="appeal", target_id=str(appeal_id)

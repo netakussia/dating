@@ -137,6 +137,11 @@ class PhotoModerationService:
                     f"face={assessment.face_detected}"
                 ),
             )
+        elif profile and profile.moderation_locked:
+            # A replacement photo passed the check after a resolved case or after an automatic recheck: allow the owner to republish.
+            profile.moderation_status = ModerationStatus.CLEAR
+            profile.moderation_locked = False
+            profile.is_visible = True
 
     async def _send_to_manual_review(
         self, user_id: int, photo_file_id: str, content_hash: str | None, error_name: str

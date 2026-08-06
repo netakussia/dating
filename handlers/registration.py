@@ -4,12 +4,13 @@ from typing import Any
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dtos.profile_dto import ProfileDraft
 from keyboards.dating import choice_keyboard
 from keyboards.profile import registration_preview_keyboard
+from services.interest_normalizer import format_interests
 from services.localization import LocalizationService
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.profile_service import ProfileService
@@ -76,44 +77,31 @@ async def _set_step(state: FSMContext, step: str) -> None:
     await state.set_state(STATE_BY_STEP[step])
 
 
+def _step_prompt(step: str, locale: str) -> str:
+    number = STEP_ORDER.index(step) + 1
+    return f"📝 Шаг {number}/{len(STEP_ORDER)}\n{localizer.get(f'registration_step_{step}', locale=locale)}"
+
+
 async def _show_step(message: Message | CallbackQuery, state: FSMContext, step: str) -> None:
     draft = await _get_draft(state)
     locale = draft.get("locale") or _language_code(message)
     if step == "gender":
         await _set_step(state, "gender")
         await message.answer(
-            localizer.get("registration_step_gender", locale=locale),
+            _step_prompt("gender", locale),
             reply_markup=choice_keyboard("reg_gender", [("Парень", "MALE"), ("Девушка", "FEMALE")]),
         )
     elif step == "target_gender":
         await _set_step(state, "target_gender")
         await message.answer(
-            localizer.get("registration_step_target_gender", locale=locale),
+            _step_prompt("target_gender", locale),
             reply_markup=choice_keyboard(
                 "reg_target", [("Парней", "MALE"), ("Девушек", "FEMALE"), ("Не важно", "ALL")]
             ),
         )
-    elif step == "name":
-        await _set_step(state, "name")
-        await message.answer(localizer.get("registration_step_name", locale=locale))
-    elif step == "age":
-        await _set_step(state, "age")
-        await message.answer(localizer.get("registration_step_age", locale=locale))
-    elif step == "district":
-        await _set_step(state, "district")
-        await message.answer(localizer.get("registration_step_district", locale=locale))
-    elif step == "institution":
-        await _set_step(state, "institution")
-        await message.answer(localizer.get("registration_step_institution", locale=locale))
-    elif step == "interests":
-        await _set_step(state, "interests")
-        await message.answer(localizer.get("registration_step_interests", locale=locale))
-    elif step == "bio":
-        await _set_step(state, "bio")
-        await message.answer(localizer.get("registration_step_bio", locale=locale))
-    elif step == "photo":
-        await _set_step(state, "photo")
-        await message.answer(localizer.get("registration_step_photo", locale=locale))
+    elif step in {"name", "age", "district", "institution", "interests", "bio", "photo"}:
+        await _set_step(state, step)
+        await message.answer(_step_prompt(step, locale))
     elif step == "preview":
         await _set_step(state, "preview")
         await _render_preview(message, state)
@@ -127,16 +115,26 @@ async def _render_preview(message: Message | CallbackQuery, state: FSMContext) -
         f"{draft.get('name') or '—'}, {draft.get('age') or '—'}\n"
         f"📍 {draft.get('district') or '—'}\n"
         f"🏫 {draft.get('institution') or '—'}\n"
-        f"🎯 {', '.join(draft.get('interests', [])) or '—'}\n\n"
+        f"🎯 {format_interests(draft.get('interests'))}\n\n"
+
         f"{draft.get('bio') or '—'}"
     )
+    header = _step_prompt("preview", locale)
     if photo_ids:
-        await message.answer_photo(photo_ids[0], caption=caption, reply_markup=registration_preview_keyboard())
-    else:
-        await message.answer(
-            localizer.get("registration_step_preview", locale=locale), reply_markup=registration_preview_keyboard()
-        )
-        await message.answer(caption)
+        if len(photo_ids) == 1:
+            await message.answer_photo(
+                photo_ids[0], caption=f"{header}\n{caption}", reply_markup=registration_preview_keyboard()
+            )
+            return
+        media = [
+            InputMediaPhoto(media=photo_id, caption=f"{header}\n{caption}" if index == 0 else None)
+            for index, photo_id in enumerate(photo_ids)
+        ]
+        await message.answer_media_group(media)
+        await message.answer("📋 Предпросмотр анкеты", reply_markup=registration_preview_keyboard())
+        return
+    await message.answer(header, reply_markup=registration_preview_keyboard())
+    await message.answer(caption)
 
 
 async def start_registration(
@@ -147,6 +145,7 @@ async def start_registration(
     draft.setdefault("is_visible", True)
     draft.setdefault("photo_file_ids", [])
     draft.setdefault("extra_data", {})
+    draft.setdefault("photo_replacement_started", False)
     await state.update_data(draft=draft)
     await state.clear()
     await state.update_data(draft=draft)
@@ -228,10 +227,8 @@ async def target(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(RegistrationState.name)
 async def name(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
     if not 2 <= len(value) <= 32:
-        await message.answer(localizer.get("registration_step_name", locale=locale))
+        await message.answer("⚠️ Имя должно содержать от 2 до 32 символов. Попробуйте ещё раз.")
         return
     await _set_draft(state, name=value)
     await _show_step(message, state, "age")
@@ -239,15 +236,14 @@ async def name(message: Message, state: FSMContext) -> None:
 
 @router.message(RegistrationState.age)
 async def age(message: Message, state: FSMContext) -> None:
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
+    text = (message.text or "").strip()
     try:
-        value = int((message.text or "").strip())
+        value = int(text)
     except (TypeError, ValueError):
-        await message.answer(localizer.get("registration_step_age", locale=locale))
+        await message.answer("⚠️ Укажите возраст числом от 16 до 99.")
         return
     if not 16 <= value <= 99:
-        await message.answer(localizer.get("registration_step_age", locale=locale))
+        await message.answer("⚠️ Укажите возраст от 16 до 99 лет.")
         return
     await _set_draft(state, age=value)
     await _show_step(message, state, "district")
@@ -256,10 +252,11 @@ async def age(message: Message, state: FSMContext) -> None:
 @router.message(RegistrationState.district)
 async def district(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
+    if not value:
+        await message.answer("⚠️ Укажите свой район.")
+        return
     if len(value) > 64:
-        await message.answer(localizer.get("registration_step_district", locale=locale))
+        await message.answer("⚠️ Район должен быть не длиннее 64 символов. Напишите ещё раз.")
         return
     await _set_draft(state, district=value)
     await _show_step(message, state, "institution")
@@ -268,10 +265,8 @@ async def district(message: Message, state: FSMContext) -> None:
 @router.message(RegistrationState.institution)
 async def institution(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
     if not 3 <= len(value) <= 64:
-        await message.answer(localizer.get("registration_step_institution", locale=locale))
+        await message.answer("⚠️ Укажите место учебы или работы: 3–64 символа.")
         return
     await _set_draft(state, institution=value)
     await _show_step(message, state, "interests")
@@ -279,11 +274,9 @@ async def institution(message: Message, state: FSMContext) -> None:
 
 @router.message(RegistrationState.interests)
 async def interests(message: Message, state: FSMContext) -> None:
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
     value = (message.text or "").strip()
     if not value:
-        await message.answer(localizer.get("registration_step_interests", locale=locale))
+        await message.answer("⚠️ Напишите хотя бы одну интересную тему через запятую.")
         return
     await _set_draft(state, interests=value)
     await _show_step(message, state, "bio")
@@ -292,10 +285,8 @@ async def interests(message: Message, state: FSMContext) -> None:
 @router.message(RegistrationState.bio)
 async def bio(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
     if not 10 <= len(value) <= 500:
-        await message.answer(localizer.get("registration_step_bio", locale=locale))
+        await message.answer("⚠️ Напишите о себе 10–500 символов.")
         return
     await _set_draft(state, bio=value)
     await _show_step(message, state, "photo")
@@ -306,19 +297,26 @@ async def photo(message: Message, state: FSMContext) -> None:
     draft = await _get_draft(state)
     photos = list(draft.get("photo_file_ids") or [])
     file_id = message.photo[-1].file_id
-    if file_id not in photos:
+    replacing_photos = bool(
+        draft.get("edit_mode") and draft.get("photo_file_ids") and not draft.get("photo_replacement_started")
+    )
+    if replacing_photos:
+        photos = [file_id]
+        await _set_draft(state, photo_replacement_started=True)
+    elif file_id not in photos:
         photos.append(file_id)
     if len(photos) > 3:
         photos = photos[:3]
+        await message.answer(
+            "⚠️ Можно загрузить не более 3 фотографий. Сохранены первые три."
+        )
     await _set_draft(state, photo_file_ids=photos, main_photo_file_id=photos[0] if photos else None)
     await _show_step(message, state, "preview")
 
 
 @router.message(RegistrationState.photo)
 async def non_photo(message: Message, state: FSMContext) -> None:
-    draft = await _get_draft(state)
-    locale = draft.get("locale") or _language_code(message)
-    await message.answer(localizer.get("photo_required", locale=locale))
+    await message.answer("⚠️ Отправьте фотографию, чтобы продолжить.")
 
 
 @router.callback_query(RegistrationState.preview, F.data == "profile:publish")
@@ -331,7 +329,7 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
         age=draft.get("age"),
         district=draft.get("district"),
         institution=draft.get("institution"),
-        interests=draft.get("interests") if isinstance(draft.get("interests"), list) else [draft.get("interests")],
+        interests=draft.get("interests"),
         bio=draft.get("bio"),
         photo_file_ids=list(draft.get("photo_file_ids") or []),
         main_photo_file_id=draft.get("main_photo_file_id"),

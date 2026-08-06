@@ -16,17 +16,21 @@ router = Router()
 async def appeal_start(message: Message, state: FSMContext, session: AsyncSession) -> None:
     user = await UserRepository(session).get(message.from_user.id)
     if user is None or user.status not in {UserStatus.SUSPENDED, UserStatus.BANNED}:
-        await message.answer("Апелляция доступна только после ограничения или блокировки анкеты.")
+        await message.answer(
+            "⚠️ Апелляция доступна только после ограничения или блокировки анкеты."
+        )
         return
     await state.set_state(AppealState.enter_text)
-    await message.answer("Опишите ситуацию для модератора (20–1500 символов).")
+    await message.answer(
+        "🆘 Апелляция\nОпишите ситуацию для модератора в свободной форме (20–1500 символов)."
+    )
 
 
 @router.message(AppealState.enter_text)
 async def appeal_send(message: Message, state: FSMContext, session: AsyncSession, settings: Settings) -> None:
     text = (message.text or "").strip()
     if not 20 <= len(text) <= 1500:
-        await message.answer("Текст должен быть от 20 до 1500 символов.")
+        await message.answer("⚠️ Текст должен быть от 20 до 1500 символов.")
         return
     appeal = await AppealRepository(session).create(message.from_user.id, text)
     await state.clear()
@@ -35,4 +39,6 @@ async def appeal_send(message: Message, state: FSMContext, session: AsyncSession
             admin_id,
             f"⚖️ Новая апелляция #{appeal.id}\nПользователь: <code>{appeal.user_id}</code>\n\n{text}",
         )
-    await message.answer("✅ Апелляция отправлена. Администратор сможет ответить вам в боте.")
+    await message.answer(
+        "✅ Апелляция отправлена. Модератор свяжется с вами через бот после проверки."
+    )

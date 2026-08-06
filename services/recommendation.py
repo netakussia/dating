@@ -108,7 +108,7 @@ class RecommendationService:
         for candidate in active:
             reasons: list[str] = []
             if candidate.user_id not in eligible_ids:
-                reasons.append("already_liked_or_blocked")
+                reasons.append("already_viewed_or_excluded")
             if mine.target_gender != Gender.ALL and candidate.gender != mine.target_gender:
                 reasons.append("gender")
             if candidate.target_gender != Gender.ALL and candidate.target_gender != mine.gender:

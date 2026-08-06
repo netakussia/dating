@@ -28,21 +28,32 @@ class FakeRecommendationRepository:
         self.profiles = {mine.user_id: mine, **{item.user_id: item for item in candidates}}
         self.candidates = candidates
         self.views = []
-
+ 
     async def profile(self, user_id):
         return self.profiles.get(user_id)
-
+ 
     async def eligible_profiles(self, _user_id):
         return self.candidates
-
+ 
     async def eligible_profile(self, _user_id, candidate_id):
         return self.profiles.get(candidate_id)
-
+ 
     async def active_profiles(self, _user_id):
         return self.candidates
-
+ 
     async def record_view(self, viewer_id, candidate_id, score):
         self.views.append((viewer_id, candidate_id, score))
+ 
+ 
+class ViewedRecommendationRepository(FakeRecommendationRepository):
+    async def eligible_profiles(self, _user_id):
+        viewed = {candidate_id for viewer_id, candidate_id, _ in self.views if viewer_id == _user_id}
+        return [candidate for candidate in self.candidates if candidate.user_id not in viewed]
+ 
+    async def eligible_profile(self, _user_id, candidate_id):
+        if any(viewer_id == _user_id and seen_candidate_id == candidate_id for viewer_id, seen_candidate_id, _ in self.views):
+            return None
+        return self.profiles.get(candidate_id)
 
 
 class FixedRecommendationStrategy:
@@ -61,6 +72,13 @@ def test_compute_score_uses_configurable_default_weights():
     candidate = profile(2, age=21)
 
     assert RecommendationService.compute_score(mine, candidate) == 99.5
+
+
+def test_normalize_text_matching_handles_aliases():
+    from services.recommendation_strategy import WeightedRecommendationStrategy
+
+    assert WeightedRecommendationStrategy._text_match("Bălți", "Бельцы") == 1.0
+    assert WeightedRecommendationStrategy._text_match("CPB", "Colegiul Politehnic") == 1.0
 
 
 def test_weighted_strategy_rejects_invalid_weight_configuration():
@@ -148,7 +166,7 @@ async def test_skip_moves_profile_to_end_of_current_queue():
     mine = profile(1)
     first, second, third = profile(2), profile(4, age=35), profile(6, age=38)
     engine = service(mine, [first, second, third])
-
+ 
     await engine.rebuild_queue(1)
     await engine.skip(1, first.user_id)
     delivered = [
@@ -156,10 +174,23 @@ async def test_skip_moves_profile_to_end_of_current_queue():
         (await engine.next_recommendation(1)).profile.user_id,
         (await engine.next_recommendation(1)).profile.user_id,
     ]
-
+ 
     assert delivered[-1] == first.user_id
-
-
+ 
+ 
+@pytest.mark.asyncio
+async def test_viewed_profiles_are_excluded_from_recommendations():
+    mine = profile(1)
+    candidate = profile(2)
+    engine = RecommendationService(None, queue=MemoryRecommendationQueue())
+    engine.repo = ViewedRecommendationRepository(mine, [candidate])
+    engine.repo.views.append((1, candidate.user_id, 80.0))
+ 
+    await engine.rebuild_queue(mine.user_id)
+ 
+    assert await engine.next_recommendation(mine.user_id) is None
+ 
+ 
 def test_incompatible_gender_is_not_eligible_for_queue():
     mine, candidate = profile(1), profile(3)
     candidate.gender = Gender.MALE

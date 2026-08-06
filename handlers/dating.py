@@ -1,14 +1,16 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from keyboards.dating import dating_keyboard, report_reasons_keyboard
 from models import ReportReason
 from repositories.discovery import DiscoveryRepository
+from services.interest_normalizer import format_interests
 from services.like_service import LikeService
 from services.match_service import MatchService
 from services.notification_service import NotificationService
+from services.profile_service import ProfileService
 from services.recommendation import RecommendationService
 from services.report_service import ReportService
 from states.dating import DatingState
@@ -26,14 +28,38 @@ def _target_id(callback: CallbackQuery) -> int | None:
 
 
 async def show_next(message: Message, user_id: int, session: AsyncSession, settings) -> None:
+    profile = await ProfileService(session).get_profile(user_id)
+    if profile is None:
+        await message.answer(
+            "📝 Для начала нужно создать анкету.\n\nБез неё мы не сможем подобрать подходящих людей.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="✨ Создать анкету", callback_data="profile:create")]]
+            ),
+        )
+        return
+    if profile.moderation_locked or profile.moderation_status.value == "UNDER_REVIEW":
+        await message.answer(
+            "⏳ Ваша анкета сейчас на проверке или ожидает замены фотографии. Пока она не участвует в знакомствах.\n\n"
+            "Откройте анкету, чтобы увидеть статус и заменить фото или подать апелляцию.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="📷 Управлять фото", callback_data="profile:photos")]]
+            ),
+        )
+        return
     recommendation = await RecommendationService(
         session, weights=settings.matching_weights
     ).next_recommendation(user_id)
     if not recommendation:
-        await message.answer("Сейчас подходящих анкет нет. Загляните позже.")
+        await message.answer("⏳ Сейчас подходящих анкет нет. Загляните позже — мы продолжим поиск.")
         return
     p = recommendation.profile
-    caption = f"{p.name}, {p.age}\n📍 {p.district}\n🏫 {p.institution}\n🎯 {', '.join(p.interests)}\n\n{p.bio}"
+    caption = (
+        f"{p.name}, {p.age}\n"
+        f"📍 {p.district}\n"
+        f"🏫 {p.institution}\n"
+        f"🎯 {format_interests(p.interests)}\n\n"
+        f"{p.bio}"
+    )
     if p.verification_status.value == "VERIFIED":
         caption += "\n\n🟢 Проверенный профиль"
     caption += f"\n\n❤️ Совместимость: {round(recommendation.score)}%"
@@ -87,14 +113,14 @@ async def comment_start(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.update_data(like_target=target)
     await state.set_state(DatingState.like_comment)
-    await callback.message.answer("Напишите короткое сообщение к лайку (до 200 символов).")
+    await callback.message.answer("💌 Напишите короткое сообщение к лайку (до 200 символов).")
     await callback.answer()
 
 @router.message(DatingState.like_comment)
 async def comment_finish(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
     text = (message.text or "").strip()
     if not 1 <= len(text) <= 200:
-        await message.answer("Сообщение должно быть от 1 до 200 символов.")
+        await message.answer("⚠️ Сообщение должно быть от 1 до 200 символов.")
         return
     target = (await state.get_data())["like_target"]
     try:
@@ -105,7 +131,7 @@ async def comment_finish(message: Message, state: FSMContext, session: AsyncSess
         return
     await state.clear()
     if not result.created:
-        await message.answer("Лайк уже был отправлен ранее.")
+        await message.answer("❤️ Лайк уже был отправлен ранее.")
         return
     match = await MatchService(session).create_if_mutual(message.from_user.id, target, result.like)
     RecommendationService(session, weights=settings.matching_weights).remove_candidate(message.from_user.id, target)
@@ -131,7 +157,7 @@ async def skip(callback: CallbackQuery, session: AsyncSession, settings) -> None
         return
     await DiscoveryRepository(session).skip(callback.from_user.id, target)
     await RecommendationService(session, weights=settings.matching_weights).skip(callback.from_user.id, target)
-    await callback.answer("Анкета больше не будет показана")
+    await callback.answer("Анкета больше не будет показана. Ищу следующую анкету...")
     await show_next(callback.message, callback.from_user.id, session, settings)
 
 @router.callback_query(F.data.startswith("block:"))
@@ -141,7 +167,7 @@ async def block(callback: CallbackQuery, session: AsyncSession, settings) -> Non
         await callback.answer("Некорректная анкета.", show_alert=True)
         return
     await DiscoveryRepository(session).block(callback.from_user.id, target)
-    await callback.answer("Пользователь заблокирован")
+    await callback.answer("Пользователь заблокирован. Ищу следующую анкету...")
     RecommendationService(session, weights=settings.matching_weights).remove_candidate(callback.from_user.id, target)
     await show_next(callback.message, callback.from_user.id, session, settings)
 
@@ -151,7 +177,7 @@ async def report(callback: CallbackQuery, session: AsyncSession) -> None:
     if target is None:
         await callback.answer("Некорректная анкета.", show_alert=True)
         return
-    await callback.message.answer("Выберите причину жалобы:", reply_markup=report_reasons_keyboard(target))
+    await callback.message.answer("⚠️ Выберите причину жалобы:", reply_markup=report_reasons_keyboard(target))
     await callback.answer()
 
 @router.callback_query(F.data.startswith("report_reason:"))

@@ -82,11 +82,16 @@ class OnnxPhotoSafetyProvider:
 
         if self._nsfw_session is None:
             self._nsfw_session = ort.InferenceSession(str(self.nsfw_model_path), providers=["CPUExecutionProvider"])
+        model_input = self._nsfw_session.get_inputs()[0]
         resized = cv2.resize(decoded, (224, 224), interpolation=cv2.INTER_AREA).astype(np.float32)
-        # Yahoo/OpenNSFW-compatible models expect BGR NCHW with Caffe channel means.
-        resized -= np.array([104.0, 117.0, 123.0], dtype=np.float32)
-        tensor = np.transpose(resized, (2, 0, 1))[None, ...]
-        input_name = self._nsfw_session.get_inputs()[0].name
+        if model_input.shape[-1] == 3:
+            # Keras/OpenNSFW2 ONNX exports use NHWC RGB tensors.
+            tensor = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)[None, ...]
+        else:
+            # Legacy Yahoo/OpenNSFW exports use BGR NCHW with Caffe channel means.
+            resized -= np.array([104.0, 117.0, 123.0], dtype=np.float32)
+            tensor = np.transpose(resized, (2, 0, 1))[None, ...]
+        input_name = model_input.name
         output = np.asarray(self._nsfw_session.run(None, {input_name: tensor})[0]).reshape(-1)
         if output.size < 2:
             raise ValueError("OpenNSFW model returned an invalid output")

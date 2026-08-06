@@ -3,11 +3,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def profile_keyboard(visible: bool = True):
     kb = InlineKeyboardBuilder()
-    kb.button(text="⏸ Скрыть" if visible else "▶️ Показать", callback_data="profile:toggle")
-    kb.button(text="✏️ Заполнить заново", callback_data="profile:edit")
+    kb.button(text="🙈 Скрыть анкету" if visible else "👀 Показать анкету", callback_data="profile:toggle")
+    kb.button(text="✏️ Редактировать анкету", callback_data="profile:edit")
     kb.button(text="📷 Управлять фото", callback_data="profile:photos")
-    kb.button(text="⏸ Пауза", callback_data="profile:pause")
-    kb.button(text="🗑 Удалить", callback_data="profile:delete")
+    kb.button(text="⏸ Поставить паузу", callback_data="profile:pause")
+    kb.button(text="🗑 Удалить анкету", callback_data="profile:delete")
     kb.adjust(2)
     return kb.as_markup()
 
