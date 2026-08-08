@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from models import ModerationCaseType, ModerationStatus, UserStatus, VerificationStatus
+from repositories.trust import TrustRepository
 from services.moderation_service import ModerationService
 from services.photo_moderation_service import PhotoAssessment, PhotoModerationService
 
@@ -32,6 +34,11 @@ class FakeSession:
 class UnsafeProvider:
     async def assess(self, _photo_id):
         return PhotoAssessment(nsfw_score=0.99, face_detected=False, provider="test")
+
+
+class SafeProvider:
+    async def assess(self, _photo_id):
+        return PhotoAssessment(nsfw_score=0.0, face_detected=True, provider="test")
 
 
 class FailingProvider:
@@ -97,3 +104,53 @@ async def test_photo_provider_failure_hides_profile_and_opens_review_case():
     assert profile.moderation_status == ModerationStatus.UNDER_REVIEW
     assert not profile.is_visible and profile.moderation_locked
     assert any(getattr(item, "case_type", None) == ModerationCaseType.NSFW for item in session.added)
+
+
+@pytest.mark.asyncio
+async def test_safe_photo_republishes_profile_only_when_no_pending_case_exists():
+    profile = SimpleNamespace(
+        moderation_status=ModerationStatus.UNDER_REVIEW,
+        is_visible=False,
+        moderation_locked=True,
+    )
+    session = FakeSession(profile=profile)
+    session.scalar_values = [profile, None]
+
+    service = PhotoModerationService(session, nsfw_threshold=0.85, provider=SafeProvider())
+    service.repo = SimpleNamespace(
+        record_photo=AsyncMock(),
+        open_case=AsyncMock(return_value=(None, True)),
+        pending_cases_for_user=AsyncMock(return_value=[]),
+    )
+
+    await service.inspect(7, "photo")
+
+    assert profile.moderation_status == ModerationStatus.CLEAR
+    assert profile.is_visible is True
+    assert profile.moderation_locked is False
+
+
+@pytest.mark.asyncio
+async def test_trust_repository_does_not_create_duplicate_pending_cases_for_same_event():
+    class TrustSession:
+        def __init__(self):
+            self.added = []
+            self._pending = None
+
+        async def scalar(self, _statement):
+            return self._pending
+
+        def add(self, item):
+            self.added.append(item)
+            self._pending = item
+
+        async def flush(self):
+            return None
+
+    session = TrustSession()
+    repo = TrustRepository(session)
+
+    await repo.open_case(7, ModerationCaseType.NSFW, source_id="hash-1")
+    await repo.open_case(7, ModerationCaseType.NSFW, source_id="hash-1")
+
+    assert len(session.added) == 1

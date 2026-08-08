@@ -4,3 +4,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 logs/
+.venv/
+.vscode/
+.idea/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.log
+.coverage
+htmlcov/

@@ -64,6 +64,20 @@ class TrustRepository:
             query = query.where(ModerationCase.case_type == case_type)
         return list((await self.session.scalars(query.order_by(ModerationCase.created_at))).all())
 
+    async def pending_cases_for_user(self, user_id: int) -> list[ModerationCase]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(ModerationCase)
+                    .where(
+                        ModerationCase.user_id == user_id,
+                        ModerationCase.status == ModerationCaseStatus.PENDING,
+                    )
+                    .order_by(ModerationCase.created_at)
+                )
+            ).all()
+        )
+
     async def photo_by_hash(self, content_hash: str) -> PhotoModeration | None:
         return await self.session.scalar(
             select(PhotoModeration)

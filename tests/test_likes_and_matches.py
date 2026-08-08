@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from models import ModerationStatus, UserStatus
 from services.like_service import LikeService
 from services.match_service import MatchService
 from utils.contacts import telegram_contact
@@ -12,6 +13,24 @@ class FakeLikeRepository:
         self.created = created
         self.reciprocal_like = reciprocal
         self.add_calls = []
+        self.session = SimpleNamespace(
+            scalar=self._scalar,
+            get=self._get,
+        )
+        self.target_profile = SimpleNamespace(
+            is_visible=True,
+            moderation_locked=False,
+            moderation_status=ModerationStatus.CLEAR,
+        )
+        self.target_user = SimpleNamespace(status=UserStatus.ACTIVE)
+    async def _scalar(self, query):
+        query_text = str(query).lower()
+        if "block" in query_text:
+            return None
+        return self.target_profile
+
+    async def _get(self, _model, _key):
+        return self.target_user
 
     async def add(self, source, target, comment):
         self.add_calls.append((source, target, comment))

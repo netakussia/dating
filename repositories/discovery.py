@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Block, Dislike, Like, Match, Profile, User
+from services.eligibility import EligibilityError, EligibilityService
 
 
 class DiscoveryRepository:
@@ -17,6 +18,11 @@ class DiscoveryRepository:
             await self.session.flush()
 
     async def block(self, blocker_id: int, blocked_id: int) -> None:
+        try:
+            await EligibilityService(self.session).ensure_action_allowed(blocker_id, blocked_id, action="заблокировать")
+        except EligibilityError:
+            return
+
         existing = await self.session.scalar(
             select(Block).where(Block.blocker_id == blocker_id, Block.blocked_id == blocked_id)
         )
@@ -30,9 +36,15 @@ class DiscoveryRepository:
         )).all())
 
     async def matches(self, user_id: int) -> list[Match]:
-        return list((await self.session.scalars(
-            select(Match).where((Match.user1_id == user_id) | (Match.user2_id == user_id)).order_by(Match.created_at.desc())
-        )).all())
+        return list(
+            (
+                await self.session.scalars(
+                    select(Match)
+                    .where((Match.user1_id == user_id) | (Match.user2_id == user_id))
+                    .order_by(Match.created_at.desc())
+                )
+            ).all()
+        )
 
     async def profile_and_user(self, user_id: int) -> tuple[Profile | None, User | None]:
         return (

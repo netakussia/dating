@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import Like, Match
 from repositories.like import LikeRepository
 from repositories.match import MatchRepository
+from services.eligibility import EligibilityError, EligibilityService
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,20 @@ class MatchService:
         self.matches = MatchRepository(session)
 
     async def create_if_mutual(self, source_id: int, target_id: int, like: Like) -> MatchResult:
+        try:
+            await EligibilityService(self.likes.session).ensure_action_allowed(
+                source_id,
+                target_id,
+                action="создать мэтч",
+            )
+            await EligibilityService(self.likes.session).ensure_action_allowed(
+                target_id,
+                source_id,
+                action="создать мэтч",
+            )
+        except EligibilityError:
+            return MatchResult(match=None, created=False)
+
         reciprocal = await self.likes.reciprocal(source_id, target_id)
         if reciprocal is None:
             return MatchResult(match=None, created=False)

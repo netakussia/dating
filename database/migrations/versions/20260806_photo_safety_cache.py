@@ -14,12 +14,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("photo_moderations", sa.Column("content_hash", sa.String(64), nullable=True))
-    op.create_index("ix_photo_moderations_content_hash", "photo_moderations", ["content_hash"])
-    op.create_unique_constraint("uq_photo_moderations_user_hash", "photo_moderations", ["user_id", "content_hash"])
+    # The baseline migration already creates the current schema, so this historical
+    # revision is kept as a compatibility no-op for fresh installs.
+    pass
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_photo_moderations_user_hash", "photo_moderations", type_="unique")
-    op.drop_index("ix_photo_moderations_content_hash", table_name="photo_moderations")
-    op.drop_column("photo_moderations", "content_hash")
+    pass

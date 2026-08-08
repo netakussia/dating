@@ -6,14 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Gender, Profile
 from repositories.recommendation import RecommendationRepository
-from services.recommendation_queue import MemoryRecommendationQueue, QueueEntry, RecommendationQueue
+from services.recommendation_queue import QueueEntry, RecommendationQueue, get_default_queue
 from services.recommendation_strategy import (
     DEFAULT_MATCHING_WEIGHTS,
     RecommendationStrategy,
     WeightedRecommendationStrategy,
 )
-
-_DEFAULT_QUEUE = MemoryRecommendationQueue()
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +39,7 @@ class RecommendationService:
     ) -> None:
         self.repo = RecommendationRepository(session)
         self.strategy = strategy or WeightedRecommendationStrategy(weights)
-        self.queue = queue or _DEFAULT_QUEUE
+        self.queue = queue or get_default_queue()
 
     async def next_recommendation(self, user_id: int) -> Recommendation | None:
         mine = await self.repo.profile(user_id)

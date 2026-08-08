@@ -5,6 +5,7 @@ from repositories.discovery import DiscoveryRepository
 from repositories.profile import ProfileRepository
 from repositories.report import ReportRepository
 from repositories.trust import TrustRepository
+from services.eligibility import EligibilityError, EligibilityService
 from services.trust_score_service import TrustScoreService
 
 
@@ -14,8 +15,11 @@ class ReportService:
         self.threshold = threshold
 
     async def submit(self, reporter_id: int, target_id: int, reason: ReportReason):
-        if reporter_id == target_id:
-            raise ValueError("Нельзя пожаловаться на себя.")
+        try:
+            await EligibilityService(self.session).ensure_action_allowed(reporter_id, target_id, action="пожаловаться")
+        except EligibilityError as error:
+            raise ValueError(str(error)) from error
+
         report, created, threshold_reached = await ReportRepository(self.session).add(
             reporter_id, target_id, reason, threshold=self.threshold
         )

@@ -1,28 +1,25 @@
 # Next Agent Context
 
-Документ отражает фактическое состояние после аудита matching и Trust System.
+Документ отражает фактическое состояние после hardening-pass по P0/P1 аудитным находкам.
 
 ## Что реализовано
 
-- Регистрация и редактирование профиля через FSM, DTO `ProfileDraft`, валидатор, нормализацию интересов, паузу и управление фото.
-- Recommendation Engine строит совместимую выборку в SQL, ранжирует её стратегией и записывает показы. Лайк/пропуск/жалоба обновляют очередь; блокировка исключается в обоих направлениях.
-- Нормализация географических данных и учебных заведений теперь работает через конфигурационные словари, чтобы понимать варианты ввода вроде Бельцы / Balti и CPB / Политех.
-- Порог распознавания лица снижен для локального ML-провайдера, чтобы паспортные и studio-style фото не скрывались ошибочно.
-- Like Engine и Match Engine используют уникальные пары и savepoint, поэтому создание лайка и матча идемпотентно.
-- Trust System: Video Note verification, уникальные жалобы, автоматический Under Review, апелляции, Trust Score, аудит модераторов и очереди NSFW/лица. Высокий NSFW score скрывает анкету до решения.
-- Единый `ProfileRequiredMiddleware` защищает знакомства, симпатии, верификацию и действия с карточками: пользователь без анкеты получает CTA «✨ Создать анкету».
-- Карточки анкет и «Моя анкета» выводят все фото (MediaGroup); первая в порядке — главная. В профиле есть управление добавлением, заменой, удалением и перестановкой до трёх фото.
-- Redis используется для FSM и rate limit. `MemoryRecommendationQueue` является текущим single-process адаптером.
+- Регистрация и редактирование профиля продолжают работать через FSM, DTO `ProfileDraft`, валидатор и сервисы профиля без добавления нового пользовательского функционала.
+- Recommendation Engine по-прежнему строит совместимую выборку в SQL, ранжирует её стратегией и пишет показы; для текущей архитектуры очередь переведена на Redis-backed implementation при сохранении прежнего интерфейса `RecommendationQueue`.
+- Eligibility checks вынесены в доменную/service-логику: лайк, жалоба, блокировка, матч и связанные действия теперь запрещаются для удалённых, скрытых, заблокированных, `UNDER_REVIEW`, неактивных или собственных профилей до попадания в репозиторий/handler.
+- Trust/Photo moderation усилили fail-closed поведение: ошибки провайдера, битые изображения, слишком большие файлы и повторные/заменяемые фото не становятся публичными; для одного события moderation case создаётся не бесконечно, а единожды.
+- Report counter теперь увеличивается атомарно через PostgreSQL-safe update path, что устраняет lost-update для конкурентных жалоб.
+- Alembic взят как единственный источник истины схемы: runtime `create_all` и inline `ALTER/CREATE TYPE` из startup убраны, добавлена baseline-миграция для текущей схемы.
 
 ## Добавленные и расширенные таблицы
 
 - `profiles`: профиль, `moderation_locked`, фото, locale/extra_data, `verification_status`, `moderation_status`, `report_count`.
 - `likes`, `matches`, `dislikes`, `blocks`: направленные действия; Like/Match/Block защищены уникальными парами.
 - `recommendation_views`: viewer/candidate/score, индексы `(viewer_id, created_at)` и `(candidate_id, created_at)`.
-- `reports`, `appeals`, `admin_logs`: модерация и аудит; Report имеет уникальную пару reporter/target в миграции Trust.
+- `reports`, `appeals`, `admin_logs`: модерация и аудит; повторные жалобы остаются идемпотентными.
 - `verification_requests`, `moderation_cases`, `photo_moderations`, `trust_score_events`: расширяемые данные Trust.
 
-Миграции: `20260805_matching_engine.py`, `20260805_trust_system.py`, `20260806_photo_safety_cache.py`, `20260807_legacy_schema_alignment.py`, `20260808_unlock_resolved_photo_cases.py`. Legacy-база, созданная через `create_all`, выровнена и отмечена Alembic; текущая head-ревизия — `20260808_unlock_photo_cases`.
+Миграции: `20260805_matching_engine.py`, `20260805_trust_system.py`, `20260806_photo_safety_cache.py`, `20260807_legacy_schema_alignment.py`, `20260808_schema_baseline.py`, `20260808_unlock_resolved_photo_cases.py`. На текущий момент Alembic baseline зафиксирован и приложение больше не пытается менять схему на старте.
 
 ## Сервисы и репозитории
 
@@ -42,21 +39,24 @@
 
 ## Принятые решения
 
-- Eligibility (visibility, active status, likes, двусторонние блоки) остаётся SQL-обязанностью; стратегия отвечает только за score. ML/AI не должен обходить этот фильтр.
-- Веса matching меняются через `MATCHING_WEIGHTS_JSON`; неизвестные/отрицательные значения отклоняются, нулевые допустимы при положительной сумме.
-- Внутренний Trust Score хранится вместе с неизменяемым журналом событий; действия модератора пишутся в `AdminLog`.
-- Photo safety: `PHOTO_SAFETY_PROVIDER=ml|heuristic|disabled`. `ml` использует локальные OpenNSFW-compatible ONNX и YuNet; нормализованный SHA-256 кэширует решение и исключает повторный ML inference. Модели монтируются в контейнер, не скачиваются и не вызывают cloud API.
-- При ошибке `PhotoSafetyProvider`, загрузки или декодирования изображения применяется fail-closed policy: результат ошибки записывается, анкета скрывается и создаётся кейс ручной модерации. `UNDER_REVIEW` дополнительно исключён из SQL-выборки рекомендаций.
-- NSFW provider определяет порядок входного тензора по ONNX metadata и поддерживает NHWC OpenNSFW2/Keras exports и legacy NCHW Caffe exports. Очередь фото в admin UI показывает исходное фото; модератор либо восстанавливает анкету, либо запрашивает замену с уведомлением пользователю.
+- Eligibility (видимость, статус пользователя, лайки, двусторонние блоки, `UNDER_REVIEW`) теперь проверяется в сервисе/репозитории до сохранения действия; стратегия отвечает только за score, а ML/AI не должен обходить этот фильтр.
+- Веса matching по-прежнему настраиваются через `MATCHING_WEIGHTS_JSON`; неизвестные/отрицательные значения отклоняются, нулевые допустимы при положительной сумме.
+- Report counter использует атомарный SQL update path (`UPDATE ... SET report_count = report_count + 1 RETURNING ...`) и не полагается на read-modify-write.
+- Photo safety остаётся fail-closed: при ошибке провайдера, загрузки или декодирования изображения фото не становится публичным, профиль скрывается и создаётся moderation case.
+- Redis-backed recommendation queue является текущим multi-process адаптером; `MemoryRecommendationQueue` больше не используется как default path в runtime.
+
+## Текущая валидация
+
+- Unit/integration tests для eligibility, report counter, recommendation queue, photo moderation и performance-пути пройдены локально.
+- Ruff и compile check для изменённых модулей пройдены.
+- Попытка выполнить реальный Alembic upgrade в этой среде не удалась из-за недоступности целевого PostgreSQL endpoint; в боевом окружении следует выполнять `alembic upgrade head` после развёртывания/доступа к БД.
 
 ## Потенциальные проблемы
 
-- Memory queue не синхронизируется между процессами и теряется при рестарте.
-- Нет baseline Alembic; `main.py` всё ещё применяет `create_all` и inline ALTER.
-- `report_count` не обновляется атомарно при конкурирующих жалобах; требуется SQL `UPDATE ... RETURNING`.
-- Событийные таблицы не имеют retention/партиционирования; статистика не имеет временных окон.
-- Внешняя/batch ML-стратегия потребует отдельного batch API: текущий контракт вызывает score для каждого кандидата.
-- UI локализован частично, уведомления не имеют outbox/retry очереди; NSFW/face provider необходимо заменить реальной локальной моделью до production.
+- Для полного end-to-end proof требуется запустить приложение и worker против живого PostgreSQL/Redis и проверить multi-process/ restart сценарии.
+- Событийные таблицы по-прежнему требуют внимания к retention/партиционированию по мере роста нагрузки.
+- Внешняя/batch ML-стратегия потребует отдельного batch API, если объём фото станет значительным.
+- UI локализован частично, уведомления по-прежнему не имеют outbox/retry очереди.
 
 ## Критически важные места
 
@@ -68,4 +68,4 @@
 
 ## Следующий рекомендуемый модуль
 
-Production hardening: Alembic baseline и удаление inline schema changes, Redis-backed recommendation queue, атомарный счётчик жалоб, фоновая очередь и observability локального photo ML, outbox для уведомлений, retention и PostgreSQL/Redis integration + load tests.
+Дальнейшее production hardening: live PostgreSQL/Redis integration smoke-test, restart/multi-process regression, наблюдаемость очередей и moderation, а затем при необходимости тонкая оптимизация только по фактическим bottlenecks.

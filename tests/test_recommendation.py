@@ -51,7 +51,10 @@ class ViewedRecommendationRepository(FakeRecommendationRepository):
         return [candidate for candidate in self.candidates if candidate.user_id not in viewed]
  
     async def eligible_profile(self, _user_id, candidate_id):
-        if any(viewer_id == _user_id and seen_candidate_id == candidate_id for viewer_id, seen_candidate_id, _ in self.views):
+        if any(
+            viewer_id == _user_id and seen_candidate_id == candidate_id
+            for viewer_id, seen_candidate_id, _ in self.views
+        ):
             return None
         return self.profiles.get(candidate_id)
 
