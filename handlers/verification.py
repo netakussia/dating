@@ -23,7 +23,14 @@ async def verification_start(message: Message, state: FSMContext) -> None:
 
 @router.message(VerificationState.waiting_video, F.video_note)
 async def verification_video(message: Message, state: FSMContext, session: AsyncSession, settings: Settings) -> None:
-    request = await VerificationService(session).submit(message.from_user.id, message.video_note.file_id)
+    try:
+        request = await VerificationService(session).submit(message.from_user.id, message.video_note.file_id)
+    except ValueError as exc:
+        # Friendly message for known validation errors (already verified / pending request)
+        await state.clear()
+        await message.answer(str(exc))
+        return
+
     await state.clear()
     notifier = NotificationService(message.bot)
     for admin_id in settings.admin_ids:
