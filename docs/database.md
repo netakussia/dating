@@ -21,7 +21,7 @@
 - Profiles связаны с пользователями через unique constraint по user_id.
 - Likes и dislikes имеют уникальные пары (from_user_id, to_user_id).
 - Matches хранят пару пользователей без дублирования.
-- Recommendation views хранят viewer, candidate и Score; индексы покрывают viewer/candidate вместе с created_at.
+- Recommendation views хранят viewer, candidate и Score; уникальная пара `(viewer_id, candidate_id)` исключает повторную выдачу, а временные индексы покрывают аналитику.
 - Reports и appeals связаны с пользователями и могут быть обработаны администратором.
 - Reports имеют уникальную пару `(reporter_id, target_user_id)`, поэтому повторная жалоба идемпотентна.
 - `users.trust_score` ограничивается сервисом диапазоном 0–100; причина и ссылка на решение хранятся в TrustScoreEvent.

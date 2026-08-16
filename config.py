@@ -1,9 +1,19 @@
 import json
+import math
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DOCUMENT_URLS = {
+    "terms": "https://example.com/me-anima/docs/terms-of-service",
+    "privacy": "https://example.com/me-anima/docs/privacy-policy",
+    "community": "https://example.com/me-anima/docs/community-guidelines",
+    "safety": "https://example.com/me-anima/docs/dating-safety",
+    "moderation": "https://example.com/me-anima/docs/moderation-and-appeals",
+    "alpha": "https://example.com/me-anima/docs/alpha-notice",
+}
 
 
 class Settings(BaseSettings):
@@ -14,6 +24,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     daily_secret_salt: str = Field(..., min_length=16)
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
+    document_base_url: str = Field(default="https://example.com/me-anima/docs", alias="DOCUMENT_BASE_URL")
     log_level: str = "INFO"
     nsfw_threshold: float = 0.85
     photo_safety_provider: Literal["ml", "heuristic", "disabled"] = "heuristic"
@@ -36,6 +47,18 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_IDS должен содержать только числовые Telegram ID через запятую.") from error
 
     @property
+    def document_urls(self) -> dict[str, str]:
+        base = self.document_base_url.rstrip("/")
+        return {
+            "terms": f"{base}/terms-of-service",
+            "privacy": f"{base}/privacy-policy",
+            "community": f"{base}/community-guidelines",
+            "safety": f"{base}/dating-safety",
+            "moderation": f"{base}/moderation-and-appeals",
+            "alpha": f"{base}/alpha-notice",
+        }
+
+    @property
     def matching_weights(self) -> dict[str, float]:
         defaults = {
             "gender": 35.0,
@@ -55,7 +78,13 @@ class Settings(BaseSettings):
         if not isinstance(configured, dict):
             raise ValueError("MATCHING_WEIGHTS_JSON должен содержать JSON-объект.")
         for name, value in configured.items():
-            if name not in defaults or not isinstance(value, int | float) or value < 0:
+            if (
+                name not in defaults
+                or isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or value < 0
+            ):
                 raise ValueError(f"Некорректный вес matching: {name!r}.")
             defaults[name] = float(value)
         return defaults

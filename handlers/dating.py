@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from keyboards.dating import dating_keyboard, report_reasons_keyboard
 from models import ReportReason
 from repositories.discovery import DiscoveryRepository
+from repositories.trust import TrustRepository
 from services.interest_normalizer import format_interests
 from services.like_service import LikeService
 from services.match_service import MatchService
@@ -14,7 +15,9 @@ from services.profile_service import ProfileService
 from services.recommendation import RecommendationService
 from services.report_service import ReportService
 from states.dating import DatingState
+from utils.admin_ui import user_display_name
 from utils.contacts import telegram_contact
+from utils.document_links import documents_keyboard
 from utils.profile_media import send_profile_gallery
 
 router = Router()
@@ -87,7 +90,8 @@ async def like(callback: CallbackQuery, session: AsyncSession, settings) -> None
         return
     match = await MatchService(session).create_if_mutual(callback.from_user.id, target, result.like)
     await callback.answer("Это взаимно! 🎉" if match.created else "Лайк отправлен ❤️")
-    RecommendationService(session, weights=settings.matching_weights).remove_candidate(callback.from_user.id, target)
+    rec_svc = RecommendationService(session, weights=settings.matching_weights)
+    await rec_svc.remove_candidate(callback.from_user.id, target)
     notifier = NotificationService(callback.bot)
     if match.created:
         target_profile, target_user = await DiscoveryRepository(session).profile_and_user(target)
@@ -134,7 +138,8 @@ async def comment_finish(message: Message, state: FSMContext, session: AsyncSess
         await message.answer("❤️ Лайк уже был отправлен ранее.")
         return
     match = await MatchService(session).create_if_mutual(message.from_user.id, target, result.like)
-    RecommendationService(session, weights=settings.matching_weights).remove_candidate(message.from_user.id, target)
+    rec_svc = RecommendationService(session, weights=settings.matching_weights)
+    await rec_svc.remove_candidate(message.from_user.id, target)
     notifier = NotificationService(message.bot)
     await notifier.safe_send(target, "💌 Кому-то понравилась ваша анкета.\n\n" + text)
     if match.created:
@@ -168,7 +173,8 @@ async def block(callback: CallbackQuery, session: AsyncSession, settings) -> Non
         return
     await DiscoveryRepository(session).block(callback.from_user.id, target)
     await callback.answer("Пользователь заблокирован. Ищу следующую анкету...")
-    RecommendationService(session, weights=settings.matching_weights).remove_candidate(callback.from_user.id, target)
+    rec_svc = RecommendationService(session, weights=settings.matching_weights)
+    await rec_svc.remove_candidate(callback.from_user.id, target)
     await show_next(callback.message, callback.from_user.id, session, settings)
 
 @router.callback_query(F.data.startswith("report:"))
@@ -177,7 +183,11 @@ async def report(callback: CallbackQuery, session: AsyncSession) -> None:
     if target is None:
         await callback.answer("Некорректная анкета.", show_alert=True)
         return
-    await callback.message.answer("⚠️ Выберите причину жалобы:", reply_markup=report_reasons_keyboard(target))
+    await callback.message.answer(
+        "⚠️ Жалоба отправляется модераторам.\n\nПроверьте правила сообщества и процесс модерации:",
+        reply_markup=documents_keyboard("community", "safety", "moderation"),
+    )
+    await callback.message.answer("📌 Выберите причину жалобы:", reply_markup=report_reasons_keyboard(target))
     await callback.answer()
 
 @router.callback_query(F.data.startswith("report_reason:"))
@@ -196,11 +206,21 @@ async def report_reason(callback: CallbackQuery, session: AsyncSession, settings
     except ValueError as error:
         await callback.answer(str(error), show_alert=True)
         return
-    RecommendationService(session, weights=settings.matching_weights).remove_candidate(callback.from_user.id, target)
+    rec_svc = RecommendationService(session, weights=settings.matching_weights)
+    await rec_svc.remove_candidate(callback.from_user.id, target)
     if threshold_reached:
         for admin_id in settings.admin_ids:
             await NotificationService(callback.bot).safe_send(
-                admin_id, f"⚠️ Анкета <code>{target}</code> автоматически снята с публикации: достигнут порог жалоб."
+                admin_id,
+                f"⚠️ Анкета {user_display_name(target)} автоматически снята с публикации: достигнут порог жалоб.",
+                dedupe_key=f"report-threshold:{target}",
+            )
+            await TrustRepository(session).log(
+                admin_id,
+                "report_threshold_notice_sent",
+                target_type="report",
+                target_id=str(target),
+                metadata={"target_user_id": target},
             )
     await callback.message.edit_text("✅ Жалоба отправлена модераторам." if created else "Эта жалоба уже была учтена.")
     await callback.answer("Спасибо за помощь")

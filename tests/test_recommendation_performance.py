@@ -37,8 +37,8 @@ class PerformanceRepository:
     async def active_profiles(self, _user_id):
         return self.candidates
 
-    async def record_view(self, viewer_id, candidate_id, score):
-        return None
+    async def record_view_once(self, viewer_id, candidate_id, score):
+        return object()
 
 
 def profile(user_id: int):

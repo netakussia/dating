@@ -7,6 +7,7 @@ from models import ModerationCaseType, ModerationStatus, UserStatus, Verificatio
 from repositories.trust import TrustRepository
 from services.moderation_service import ModerationService
 from services.photo_moderation_service import PhotoAssessment, PhotoModerationService
+from services.verification_service import VerificationService
 
 
 class FakeSession:
@@ -154,3 +155,35 @@ async def test_trust_repository_does_not_create_duplicate_pending_cases_for_same
     await repo.open_case(7, ModerationCaseType.NSFW, source_id="hash-1")
 
     assert len(session.added) == 1
+
+
+@pytest.mark.asyncio
+async def test_verification_submit_blocks_verified_and_pending_user():
+    profile = SimpleNamespace(verification_status=VerificationStatus.VERIFIED)
+    session = FakeSession(profile=profile)
+    service = VerificationService(session)
+    service.repo = SimpleNamespace(active_verification_for_user=AsyncMock(return_value=None))
+
+    with pytest.raises(ValueError, match="уже верифицированы"):
+        await service.submit(7, "video-file")
+
+    profile.verification_status = VerificationStatus.PENDING
+    service.repo.active_verification_for_user = AsyncMock(return_value=SimpleNamespace(user_id=7))
+    with pytest.raises(ValueError, match="текущая заявка"):
+        await service.submit(7, "video-file")
+
+
+@pytest.mark.asyncio
+async def test_verification_submit_accepts_rejected_user_and_sets_pending():
+    profile = SimpleNamespace(verification_status=VerificationStatus.REJECTED)
+    session = FakeSession(profile=profile)
+    service = VerificationService(session)
+    service.repo = SimpleNamespace(
+        active_verification_for_user=AsyncMock(return_value=None),
+        open_verification=AsyncMock(return_value=SimpleNamespace(user_id=7, video_file_id="video-file")),
+    )
+
+    request = await service.submit(7, "video-file")
+
+    assert profile.verification_status == VerificationStatus.PENDING
+    assert request.video_file_id == "video-file"

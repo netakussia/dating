@@ -24,7 +24,20 @@ class TrustRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def active_verification_for_user(self, user_id: int) -> VerificationRequest | None:
+        return await self.session.scalar(
+            select(VerificationRequest)
+            .where(
+                VerificationRequest.user_id == user_id,
+                VerificationRequest.status == VerificationDecision.PENDING,
+            )
+            .order_by(VerificationRequest.created_at.desc())
+        )
+
     async def open_verification(self, user_id: int, video_file_id: str) -> VerificationRequest:
+        active = await self.active_verification_for_user(user_id)
+        if active is not None:
+            raise ValueError("У пользователя уже есть активная заявка на верификацию.")
         request = VerificationRequest(user_id=user_id, video_file_id=video_file_id)
         self.session.add(request)
         await self.session.flush()

@@ -1,4 +1,7 @@
+import pytest
+
 from services.interest_normalizer import normalize_interests
+from services.profile_service import ProfileService
 from utils.profile_media import ordered_photo_ids
 from validators.profile_validator import ProfileValidationError, validate_profile_payload
 
@@ -77,3 +80,52 @@ def test_main_photo_is_rendered_first_in_gallery():
     )()
 
     assert ordered_photo_ids(profile) == ["two", "one", "three"]
+
+
+class FakeProfileRepository:
+    def __init__(self, profile):
+        self.profile = profile
+        self.save_calls = 0
+
+    async def by_user_id(self, _user_id):
+        return self.profile
+
+    async def save(self, _profile):
+        self.save_calls += 1
+
+
+def managed_profile(photo_ids):
+    return type(
+        "Profile",
+        (),
+        {
+            "photo_file_ids": list(photo_ids),
+            "photo_file_id": photo_ids[0] if photo_ids else "",
+            "main_photo_file_id": photo_ids[0] if photo_ids else None,
+            "extra_data": {"photo_file_ids": list(photo_ids)},
+        },
+    )()
+
+
+@pytest.mark.asyncio
+async def test_stale_photo_operations_are_safe_noops():
+    profile = managed_profile(["one", "two"])
+    service = ProfileService(None)
+    service.repo = FakeProfileRepository(profile)
+
+    assert await service.move_photo(1, "gone", 1) is profile
+    assert await service.replace_photo(1, "gone", "new") is profile
+    assert profile.photo_file_ids == ["one", "two"]
+    assert service.repo.save_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_add_photo_rejects_stale_fourth_upload():
+    profile = managed_profile(["one", "two", "three"])
+    service = ProfileService(None)
+    service.repo = FakeProfileRepository(profile)
+
+    with pytest.raises(ValueError, match="не более трёх"):
+        await service.add_photo(1, "four")
+
+    assert profile.photo_file_ids == ["one", "two", "three"]

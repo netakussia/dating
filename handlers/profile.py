@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from services.interest_normalizer import format_interests
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.profile_service import ProfileService
 from states.profile_photo import ProfilePhotoState
+from utils.document_links import documents_keyboard
+from utils.legal import CONSENT_KEY
 from utils.profile_media import ordered_photo_ids, send_profile_gallery
 
 router = Router()
@@ -32,10 +35,22 @@ def _confirm_keyboard(yes_text: str, yes_data: str) -> InlineKeyboardMarkup:
 
 
 async def _update_message_text(message: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
-    if message.photo:
-        await message.edit_caption(caption=text, reply_markup=reply_markup)
-    else:
-        await message.edit_text(text, reply_markup=reply_markup)
+    try:
+        if message.photo:
+            await message.edit_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
+
+
+async def _safe_edit_reply_markup(message: Message, reply_markup: InlineKeyboardMarkup) -> None:
+    try:
+        await message.edit_reply_markup(reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 
 def _profile_description(profile) -> str:
@@ -67,14 +82,42 @@ async def profile(message: Message, session: AsyncSession, state: FSMContext) ->
     service = ProfileService(session)
     p = await service.get_profile(message.from_user.id)
     if not p:
+        if not (await state.get_data()).get(CONSENT_KEY, False):
+            await message.answer(
+                "⚠️ Для создания анкеты сначала ознакомьтесь с документами MeAnima.",
+                reply_markup=documents_keyboard(
+                    "terms",
+                    "privacy",
+                    "community",
+                    "safety",
+                    "moderation",
+                    "alpha",
+                    include_continue=True,
+                ),
+            )
+            return
         await start_registration(message, state)
         return
     await send_profile_gallery(message, p, _profile_description(p), profile_keyboard(p.is_visible))
 
 
 @router.callback_query(F.data == "profile:create")
-async def create_profile(callback: CallbackQuery, state: FSMContext) -> None:
+async def create_profile(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     await callback.answer()
+    if not (await state.get_data()).get(CONSENT_KEY, False):
+        await callback.message.answer(
+            "⚠️ Для создания анкеты сначала ознакомьтесь с документами MeAnima.",
+            reply_markup=documents_keyboard(
+                "terms",
+                "privacy",
+                "community",
+                "safety",
+                "moderation",
+                "alpha",
+                include_continue=True,
+            ),
+        )
+        return
     await start_registration(callback.message, state)
 
 
@@ -112,21 +155,29 @@ async def set_main_photo(callback: CallbackQuery, session: AsyncSession) -> None
     )
     updated = await ProfileService(session).get_profile(callback.from_user.id)
     await callback.answer("⭐ Главная фотография обновлена")
-    await callback.message.edit_reply_markup(reply_markup=photo_management_keyboard(len(updated.photo_file_ids)))
+    await _safe_edit_reply_markup(callback.message, photo_management_keyboard(len(updated.photo_file_ids)))
 
 
 @router.callback_query(F.data.startswith("photo:move:"))
 async def move_photo(callback: CallbackQuery, session: AsyncSession) -> None:
-    _, _, raw_index, raw_direction = (callback.data or "").split(":")
+    try:
+        _, _, raw_index, raw_direction = (callback.data or "").split(":")
+        direction = int(raw_direction)
+    except ValueError:
+        await callback.answer("Некорректная фотография.", show_alert=True)
+        return
+    if direction not in {-1, 1}:
+        await callback.answer("Некорректное направление.", show_alert=True)
+        return
     profile = await ProfileService(session).get_profile(callback.from_user.id)
     photo_id = _photo_at(profile, raw_index) if profile else None
     if photo_id is None:
         await callback.answer("Фотография уже изменилась.", show_alert=True)
         return
-    await ProfileService(session).move_photo(callback.from_user.id, photo_id, int(raw_direction))
+    await ProfileService(session).move_photo(callback.from_user.id, photo_id, direction)
     updated = await ProfileService(session).get_profile(callback.from_user.id)
     await callback.answer("↔️ Порядок фотографий обновлён")
-    await callback.message.edit_reply_markup(reply_markup=photo_management_keyboard(len(updated.photo_file_ids)))
+    await _safe_edit_reply_markup(callback.message, photo_management_keyboard(len(updated.photo_file_ids)))
 
 
 @router.callback_query(F.data.startswith("photo:delete:"))
@@ -179,7 +230,12 @@ async def request_add_photo(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("photo:replace:"))
 async def request_replace_photo(callback: CallbackQuery, state: FSMContext) -> None:
-    _, _, raw_index = (callback.data or "photo:replace:").split(":")
+    try:
+        _, _, raw_index = (callback.data or "").split(":")
+        int(raw_index)
+    except ValueError:
+        await callback.answer("Некорректная фотография.", show_alert=True)
+        return
     await state.update_data(photo_action="replace", photo_index=raw_index)
     await state.set_state(ProfilePhotoState.waiting_photo)
     await _update_message_text(callback.message, "📸 Отправьте новую фотографию.", reply_markup=None)
@@ -208,6 +264,8 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
         await PhotoModerationService(
             session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
         ).inspect(message.from_user.id, photo_id)
+    except ValueError as error:
+        await message.answer(str(error))
     except PhotoModerationError:
         await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
     else:
@@ -246,7 +304,7 @@ async def toggle(callback: CallbackQuery, session: AsyncSession) -> None:
         return
     p.is_visible = True
     await session.flush()
-    await callback.message.edit_reply_markup(reply_markup=profile_keyboard(True))
+    await _safe_edit_reply_markup(callback.message, profile_keyboard(True))
     await callback.answer("👀 Анкета снова видна")
 
 
@@ -285,7 +343,7 @@ async def pause(callback: CallbackQuery, session: AsyncSession) -> None:
     except ValueError:
         await callback.answer("Анкета не найдена", show_alert=True)
         return
-    await callback.message.edit_reply_markup(reply_markup=profile_keyboard(False))
+    await _safe_edit_reply_markup(callback.message, profile_keyboard(False))
     await callback.answer("Анкета на паузе")
 
 
@@ -297,7 +355,8 @@ async def delete(callback: CallbackQuery, session: AsyncSession) -> None:
         return
     await _update_message_text(
         callback.message,
-        "🗑 Вы уверены, что хотите удалить анкету? Это действие нельзя отменить.",
+        "🗑 Вы уверены, что хотите удалить анкету? Это действие нельзя отменить.\n\n"
+        "После удаления профиль и связанные данные будут удалены по правилам конфиденциальности.",
         reply_markup=_confirm_keyboard("Да, удалить", "profile:delete_confirm"),
     )
     await callback.answer()

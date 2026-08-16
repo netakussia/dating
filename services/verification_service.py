@@ -1,9 +1,9 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Profile, VerificationDecision, VerificationStatus
+from models import Profile, VerificationDecision, VerificationRequest, VerificationStatus
 from repositories.trust import TrustRepository
 from services.trust_score_service import TrustScoreService
 
@@ -14,19 +14,31 @@ class VerificationService:
         self.repo = TrustRepository(session)
 
     async def submit(self, user_id: int, video_file_id: str):
-        profile = await self.session.scalar(select(Profile).where(Profile.user_id == user_id))
+        profile = await self.session.scalar(select(Profile).where(Profile.user_id == user_id).with_for_update())
         if profile is None:
             raise ValueError("Сначала создайте анкету.")
+        if profile.verification_status == VerificationStatus.VERIFIED:
+            raise ValueError("Вы уже верифицированы и повторная отправка кружка недоступна.")
+        if profile.verification_status == VerificationStatus.PENDING:
+            raise ValueError("У вас уже есть текущая заявка на верификацию.")
+        active = await self.repo.active_verification_for_user(user_id)
+        if active is not None:
+            raise ValueError("У вас уже есть активная заявка на верификацию.")
         profile.verification_status = VerificationStatus.PENDING
         return await self.repo.open_verification(user_id, video_file_id)
 
     async def decide(
         self, request_id: uuid.UUID, admin_id: int, decision: VerificationDecision, comment: str | None = None
     ):
-        request = await self.repo.verification(request_id)
-        if request is None or request.status != VerificationDecision.PENDING:
+        result = await self.session.execute(
+            update(VerificationRequest)
+            .where(VerificationRequest.id == request_id, VerificationRequest.status == VerificationDecision.PENDING)
+            .values(status=decision, admin_id=admin_id, comment=comment)
+            .returning(VerificationRequest)
+        )
+        request = result.scalar_one_or_none()
+        if request is None:
             return None, False
-        request.status, request.admin_id, request.comment = decision, admin_id, comment
         profile = await self.session.scalar(select(Profile).where(Profile.user_id == request.user_id))
         if profile:
             profile.verification_status = {

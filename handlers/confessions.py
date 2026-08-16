@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import Settings
 from services.confession_service import ConfessionService
+from services.notification_service import NotificationService
 from states.confession import ConfessionState
 
 router = Router()
@@ -61,8 +62,14 @@ async def send(callback: CallbackQuery, state: FSMContext, session: AsyncSession
         callback.from_user.id, recipient, text
     )
     if confession.recipient_id:
-        await callback.bot.send_message(confession.recipient_id, f"💌 Вам анонимное признание:\n\n{text}")
-        await callback.message.edit_text("✅ Признание доставлено анонимно.")
+        delivered = await NotificationService(callback.bot).safe_send(
+            confession.recipient_id, f"💌 Вам анонимное признание:\n\n{text}"
+        )
+        await callback.message.edit_text(
+            "✅ Признание доставлено анонимно."
+            if delivered
+            else "✅ Признание сохранено, но Telegram временно не подтвердил доставку."
+        )
     else:
         link = f"https://t.me/{(await callback.bot.get_me()).username}?start=confession_{confession.id}"
         await callback.message.edit_text(

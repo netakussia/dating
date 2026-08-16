@@ -41,8 +41,11 @@ class FakeRecommendationRepository:
     async def active_profiles(self, _user_id):
         return self.candidates
  
-    async def record_view(self, viewer_id, candidate_id, score):
+    async def record_view_once(self, viewer_id, candidate_id, score):
+        if any(viewer == viewer_id and candidate == candidate_id for viewer, candidate, _ in self.views):
+            return None
         self.views.append((viewer_id, candidate_id, score))
+        return object()
  
  
 class ViewedRecommendationRepository(FakeRecommendationRepository):
@@ -89,6 +92,8 @@ def test_weighted_strategy_rejects_invalid_weight_configuration():
         WeightedRecommendationStrategy({"unknown": 1})
     with pytest.raises(ValueError, match="Сумма"):
         WeightedRecommendationStrategy({name: 0 for name in WeightedRecommendationStrategy().weights})
+    with pytest.raises(ValueError, match="неотрицательными"):
+        WeightedRecommendationStrategy({"age": float("nan")})
 
 
 @pytest.mark.asyncio
@@ -131,7 +136,7 @@ async def test_engine_accepts_replacement_strategy_without_handler_changes():
 async def test_stale_queue_entry_is_skipped_without_recursion():
     mine, candidate = profile(1), profile(2)
     engine = service(mine, [candidate])
-    engine.queue.replace(1, [QueueEntry(999, 99), QueueEntry(candidate.user_id, 90)])
+    await engine.queue.replace(1, [QueueEntry(999, 99), QueueEntry(candidate.user_id, 90)])
 
     recommendation = await engine.next_recommendation(1)
 

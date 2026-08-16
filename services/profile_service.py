@@ -92,6 +92,8 @@ class ProfileService:
             raise ValueError("Profile does not exist")
         photo_ids = list((profile.extra_data or {}).get("photo_file_ids", list(profile.photo_file_ids or [])))
         if photo_file_id not in photo_ids:
+            if len(photo_ids) >= 3:
+                raise ValueError("В анкете может быть не более трёх фотографий.")
             photo_ids.append(photo_file_id)
         self._sync_photo_state(profile, photo_ids)
         await self.repo.save(profile)
@@ -113,6 +115,8 @@ class ProfileService:
         if profile is None:
             raise ValueError("Profile does not exist")
         photo_ids = list(profile.photo_file_ids or [])
+        if photo_file_id not in photo_ids:
+            return profile
         index = photo_ids.index(photo_file_id)
         target = index + direction
         if not 0 <= target < len(photo_ids):
@@ -128,6 +132,8 @@ class ProfileService:
             raise ValueError("Profile does not exist")
         photo_ids = list(profile.photo_file_ids or [])
         if new_file_id == old_file_id:
+            return profile
+        if old_file_id not in photo_ids:
             return profile
         if new_file_id in photo_ids:
             photo_ids.remove(new_file_id)

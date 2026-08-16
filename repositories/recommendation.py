@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Block, Dislike, Like, ModerationStatus, Profile, RecommendationView, User, UserStatus
@@ -80,8 +81,13 @@ class RecommendationRepository:
         )
         return list((await self.session.scalars(statement)).all())
 
-    async def record_view(self, viewer_id: int, candidate_id: int, score: float) -> RecommendationView:
+    async def record_view_once(self, viewer_id: int, candidate_id: int, score: float) -> RecommendationView | None:
+        """Atomically claim a candidate for a viewer before rendering its card."""
         event = RecommendationView(viewer_id=viewer_id, candidate_id=candidate_id, score=score)
-        self.session.add(event)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                self.session.add(event)
+                await self.session.flush()
+        except IntegrityError:
+            return None
         return event

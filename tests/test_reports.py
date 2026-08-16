@@ -15,6 +15,14 @@ class FakeResult:
         return self._row
 
 
+class FakeSavepoint:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _traceback):
+        return False
+
+
 class FakeReportSession:
     def __init__(self, *, existing=None, report_count=2):
         self.existing = existing
@@ -58,11 +66,11 @@ class FakeReportSession:
     def add(self, item):
         self.added.append(item)
 
+    def begin_nested(self):
+        return FakeSavepoint()
+
     async def flush(self):
         return None
-
-    async def rollback(self):
-        self.rolled_back = True
 
 
 class FakeDuplicateReportSession(FakeReportSession):
@@ -77,11 +85,8 @@ class FakeDuplicateReportSession(FakeReportSession):
             return None
         return self.existing
 
-    async def execute(self, statement):
+    async def flush(self):
         raise IntegrityError("duplicate key value violates unique constraint", {}, None)
-
-    async def rollback(self):
-        self.rollback_called = True
 
 
 @pytest.mark.asyncio
@@ -112,4 +117,14 @@ async def test_duplicate_report_does_not_increment_report_count_or_raise():
     assert not created
     assert not threshold_reached
     assert existing_report is not None
-    assert session.rollback_called
+
+
+@pytest.mark.asyncio
+async def test_report_above_threshold_does_not_repeat_suspension_side_effects():
+    session = FakeReportSession(report_count=3)
+
+    _, created, threshold_reached = await ReportRepository(session).add(1, 2, ReportReason.SPAM, threshold=3)
+
+    assert created
+    assert not threshold_reached
+    assert len(session.executed_updates) == 1

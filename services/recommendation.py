@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass
 
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Gender, Profile
@@ -45,17 +48,51 @@ class RecommendationService:
         mine = await self.repo.profile(user_id)
         if mine is None:
             return None
-        entry = self.queue.pop(user_id)
+        try:
+            return await self._next_from_queue(user_id, mine)
+        except RedisError as error:
+            logging.getLogger(__name__).warning(
+                "Recommendation queue unavailable for user %s; using database fallback: %s", user_id, error
+            )
+            return await self._next_from_database(user_id, mine)
+
+    async def _next_from_queue(self, user_id: int, mine: Profile) -> Recommendation | None:
+        entry = await self.queue.pop(user_id)
         if entry is None:
             await self.rebuild_queue(user_id, mine)
-            entry = self.queue.pop(user_id)
+            entry = await self.queue.pop(user_id)
         while entry is not None:
             profile = await self.repo.eligible_profile(user_id, entry.candidate_id)
             if profile is None or not self.is_compatible(mine, profile):
-                entry = self.queue.pop(user_id)
+                entry = await self.queue.pop(user_id)
                 continue
-            await self.repo.record_view(user_id, profile.user_id, entry.score)
-            return Recommendation(profile=profile, score=entry.score)
+            if await self.repo.record_view_once(user_id, profile.user_id, entry.score) is not None:
+                return Recommendation(profile=profile, score=entry.score)
+            entry = await self.queue.pop(user_id)
+        return None
+
+    async def _next_from_database(self, user_id: int, mine: Profile) -> Recommendation | None:
+        """Serve one card when disposable Redis state is temporarily unavailable."""
+        candidates = await self.repo.eligible_profiles(user_id)
+        ranked: list[QueueEntry] = []
+        for candidate in candidates:
+            if not self.is_compatible(mine, candidate):
+                continue
+            try:
+                score = float(await self.strategy.score(mine, candidate))
+            except Exception as error:
+                logging.getLogger(__name__).warning(
+                    "Error scoring database-fallback candidate %s for user %s: %s", candidate.user_id, user_id, error
+                )
+                continue
+            if math.isfinite(score):
+                ranked.append(QueueEntry(candidate.user_id, score))
+        for entry in sorted(ranked, key=lambda item: (-item.score, item.candidate_id)):
+            profile = await self.repo.eligible_profile(user_id, entry.candidate_id)
+            if profile is None:
+                continue
+            if await self.repo.record_view_once(user_id, profile.user_id, entry.score) is not None:
+                return Recommendation(profile=profile, score=entry.score)
         return None
 
     async def next_profile(self, user_id: int) -> Profile | None:
@@ -63,27 +100,59 @@ class RecommendationService:
         return recommendation.profile if recommendation else None
 
     async def rebuild_queue(self, user_id: int, mine: Profile | None = None) -> int:
+        import asyncio
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         mine = mine or await self.repo.profile(user_id)
         if mine is None:
-            self.queue.clear(user_id)
+            await self.queue.clear(user_id)
             return 0
         candidates = await self.repo.eligible_profiles(user_id)
-        entries = []
-        for candidate in candidates:
-            if self.is_compatible(mine, candidate):
-                entries.append(QueueEntry(candidate.user_id, await self.strategy.score(mine, candidate)))
+        # Filter compatible candidates first to avoid unnecessary scoring
+        candidates_to_score = [candidate for candidate in candidates if self.is_compatible(mine, candidate)]
+        entries: list[QueueEntry] = []
+        if candidates_to_score:
+            # Compute scores concurrently to improve rebuild latency for large pools.
+            coros = [self.strategy.score(mine, candidate) for candidate in candidates_to_score]
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for candidate, result in zip(candidates_to_score, results):
+                if isinstance(result, Exception):
+                    logger.exception("Error scoring candidate %s for user %s: %s", candidate.user_id, user_id, result)
+                    # Skip candidates that failed scoring
+                    continue
+                try:
+                    score = float(result)
+                except (TypeError, ValueError):
+                    logger.warning("Invalid score returned for candidate %s: %r", candidate.user_id, result)
+                    continue
+                if not math.isfinite(score):
+                    logger.warning("Non-finite score returned for candidate %s: %r", candidate.user_id, result)
+                    continue
+                entries.append(QueueEntry(candidate.user_id, score))
         entries.sort(key=lambda entry: (-entry.score, entry.candidate_id))
-        self.queue.replace(user_id, entries)
+        await self.queue.replace(user_id, entries)
         return len(entries)
 
     async def skip(self, user_id: int, candidate_id: int) -> None:
         mine = await self.repo.profile(user_id)
         candidate = await self.repo.profile(candidate_id)
         if mine is not None and candidate is not None and self.is_compatible(mine, candidate):
-            self.queue.move_to_end(user_id, candidate_id, await self.strategy.score(mine, candidate))
+            try:
+                await self.queue.move_to_end(user_id, candidate_id, await self.strategy.score(mine, candidate))
+            except RedisError as error:
+                logging.getLogger(__name__).warning(
+                    "Could not update recommendation queue for skipped candidate %s: %s", candidate_id, error
+                )
 
-    def remove_candidate(self, user_id: int, candidate_id: int) -> None:
-        self.queue.remove(user_id, candidate_id)
+    async def remove_candidate(self, user_id: int, candidate_id: int) -> None:
+        try:
+            await self.queue.remove(user_id, candidate_id)
+        except RedisError as error:
+            logging.getLogger(__name__).warning(
+                "Could not remove candidate %s from recommendation queue: %s", candidate_id, error
+            )
 
     @staticmethod
     def is_compatible(mine: Profile, candidate: Profile) -> bool:

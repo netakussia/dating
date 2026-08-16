@@ -31,13 +31,21 @@
 ## Интерфейсы, которые нельзя менять без миграции потребителей
 
 - `RecommendationStrategy.score(viewer, candidate)`, `RecommendationService.next_recommendation`, `rebuild_queue`, `skip`, `remove_candidate`.
-- `RecommendationQueue.replace/pop/move_to_end/remove/clear`.
+- `RecommendationQueue.replace/pop/move_to_end/remove/clear` (async methods now; queue operations are awaited by RecommendationService).
 - `LikeService.create`, `MatchService.create_if_mutual`, `MatchService.matches_for`.
 - `ProfileService.create_or_update` и `ProfileDraft.to_payload()`.
 - `PhotoSafetyProvider.assess(photo_file_id)`.
 - FSM/callback data: `like:*`, `comment:*`, `skip:*`, `block:*`, `report:*`, `verify:*`, `case:*`, `appeal:*`.
 
 ## Принятые решения
+
+## Test utilities
+
+- To reset test data (development only) use: python -m tools.reset_test_data. The tool is located at tools/reset_test_data.py and performs destructive delete operations in a single DB transaction and complementary Redis cleanup. It only runs when ENV or ENVIRONMENT is set to one of: development, dev, test. Do NOT run in production.
+
+- To seed mass test profiles (development only) use: python -m tools.seed_test_profiles --count 50. This will create fake Users/Profiles (IDs start at 200000) and invoke RecommendationService.rebuild_queue for each created user.
+
+
 
 - Eligibility (видимость, статус пользователя, лайки, двусторонние блоки, `UNDER_REVIEW`) теперь проверяется в сервисе/репозитории до сохранения действия; стратегия отвечает только за score, а ML/AI не должен обходить этот фильтр.
 - Веса matching по-прежнему настраиваются через `MATCHING_WEIGHTS_JSON`; неизвестные/отрицательные значения отклоняются, нулевые допустимы при положительной сумме.

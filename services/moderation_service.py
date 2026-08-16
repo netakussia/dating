@@ -1,9 +1,9 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import ModerationCaseStatus, ModerationStatus, Profile, User, UserStatus
+from models import ModerationCase, ModerationCaseStatus, ModerationStatus, Profile, User, UserStatus
 from repositories.trust import TrustRepository
 
 
@@ -15,10 +15,15 @@ class ModerationService:
     async def resolve_case(
         self, case_id: uuid.UUID, admin_id: int, *, restore: bool = False, retake: bool = False
     ) -> tuple[object | None, bool]:
-        case = await self.repo.case(case_id)
-        if case is None or case.status != ModerationCaseStatus.PENDING:
+        result = await self.session.execute(
+            update(ModerationCase)
+            .where(ModerationCase.id == case_id, ModerationCase.status == ModerationCaseStatus.PENDING)
+            .values(status=ModerationCaseStatus.RESOLVED, admin_id=admin_id)
+            .returning(ModerationCase)
+        )
+        case = result.scalar_one_or_none()
+        if case is None:
             return case, False
-        case.status, case.admin_id = ModerationCaseStatus.RESOLVED, admin_id
         profile = await self.session.scalar(select(Profile).where(Profile.user_id == case.user_id))
         if profile:
             profile.moderation_status = ModerationStatus.CLEAR

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
@@ -71,7 +72,7 @@ class WeightedRecommendationStrategy:
         if unknown:
             raise ValueError(f"Неизвестные веса рекомендаций: {', '.join(sorted(unknown))}.")
         if any(
-            isinstance(value, bool) or not isinstance(value, int | float) or value < 0
+            isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0
             for value in self.weights.values()
         ):
             raise ValueError("Веса рекомендаций должны быть неотрицательными числами.")

@@ -21,7 +21,7 @@ async def run() -> None:
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logger.info("Starting dating bot")
     engine = create_async_engine(settings.database_url)
-    factory = make_session_factory(settings)
+    factory = make_session_factory(settings, engine=engine)
     redis = Redis.from_url(settings.redis_url)
     bot, dp = create_dispatcher(settings, factory, redis)
     try:

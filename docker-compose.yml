@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
+      - ./:/app:cached
       - ${PHOTO_SAFETY_MODELS_DIR:-./models}:/models:ro
     depends_on:
       postgres: { condition: service_healthy }
@@ -14,8 +15,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-dating_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,6 +24,7 @@ services:
       retries: 5
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redisdata:/data
     healthcheck:

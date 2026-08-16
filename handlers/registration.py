@@ -15,6 +15,8 @@ from services.localization import LocalizationService
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.profile_service import ProfileService
 from states.registration import RegistrationState
+from utils.document_links import documents_keyboard
+from utils.legal import CONSENT_KEY
 from validators.profile_validator import ProfileValidationError
 
 router = Router()
@@ -140,15 +142,30 @@ async def _render_preview(message: Message | CallbackQuery, state: FSMContext) -
 async def start_registration(
     message: Message, state: FSMContext, *, edit: bool = False, initial_draft: dict[str, Any] | None = None
 ) -> None:
+    consent = bool((await state.get_data()).get(CONSENT_KEY, False))
+    if not consent and not edit:
+        await message.answer(
+            "⚠️ Для создания анкеты сначала ознакомьтесь с документами MeAnima.",
+            reply_markup=documents_keyboard(
+                "terms",
+                "privacy",
+                "community",
+                "safety",
+                "moderation",
+                "alpha",
+                include_continue=True,
+            ),
+        )
+        return
     draft = initial_draft or await _get_draft(state)
     draft.setdefault("locale", _language_code(message))
     draft.setdefault("is_visible", True)
     draft.setdefault("photo_file_ids", [])
     draft.setdefault("extra_data", {})
     draft.setdefault("photo_replacement_started", False)
-    await state.update_data(draft=draft)
+    draft["legal_consent"] = consent
     await state.clear()
-    await state.update_data(draft=draft)
+    await state.update_data(draft=draft, legal_consent=consent)
     if edit:
         await state.update_data(edit_mode=True)
     else:
