@@ -13,6 +13,6 @@ def test_internal_state_services_are_not_published_and_redis_persists_queue_data
     compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "ports:" not in compose
-    assert 'command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]' in compose
+    assert '"--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"' in compose
     assert "pgdata:/var/lib/postgresql/data" in compose
     assert "redisdata:/data" in compose
