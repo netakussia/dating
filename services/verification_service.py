@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,7 @@ class VerificationService:
 
     async def claim(self, request_id: uuid.UUID, admin_id: int) -> VerificationRequest | None:
         """Claim a verification request for processing."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         result = await self.session.execute(
             update(VerificationRequest)
             .where(
@@ -38,7 +39,7 @@ class VerificationService:
                 VerificationRequest.status == VerificationDecision.PENDING,
                 (VerificationRequest.assigned_to.is_(None) | (VerificationRequest.assigned_to == admin_id)),
             )
-            .values(assigned_to=admin_id, assigned_at=datetime.now(timezone.utc))
+            .values(assigned_to=admin_id, assigned_at=datetime.now(UTC))
             .returning(VerificationRequest)
         )
         request = result.scalar_one_or_none()
@@ -50,7 +51,7 @@ class VerificationService:
         if current.assigned_to not in {None, admin_id}:
             return None
         current.assigned_to = admin_id
-        current.assigned_at = datetime.now(timezone.utc)
+        current.assigned_at = datetime.now(UTC)
         await self.session.flush()
         return current
 

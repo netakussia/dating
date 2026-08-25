@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     photo_safety_min_dimension: int = Field(default=64, ge=1)
     matching_weights_raw: str = Field(default="", alias="MATCHING_WEIGHTS_JSON")
     report_threshold: int = Field(default=3, ge=1, alias="REPORT_THRESHOLD")
+    confession_daily_limit: int = Field(default=20, ge=1, le=100, alias="CONFESSION_DAILY_LIMIT")
+    confession_pending_ttl_hours: int = Field(default=168, ge=1, le=24 * 31, alias="CONFESSION_PENDING_TTL_HOURS")
+    fsm_state_ttl_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600, alias="FSM_STATE_TTL_SECONDS")
     meanima_internal_chat_id: int | None = Field(
         default=None,
         validation_alias=AliasChoices("MEANIMA_INTERNAL_CHAT_ID", "MEANIMA_INTERNAL_CHAT"),

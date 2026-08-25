@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Appeal, AppealStatus
@@ -12,8 +13,20 @@ class AppealRepository:
 
     async def create(self, user_id: int, text: str) -> Appeal:
         appeal = Appeal(user_id=user_id, text=text)
-        self.session.add(appeal)
-        await self.session.flush()
+        try:
+            nested = getattr(self.session, "begin_nested", None)
+            if nested is None:
+                self.session.add(appeal)
+                await self.session.flush()
+            else:
+                async with nested():
+                    self.session.add(appeal)
+                    await self.session.flush()
+        except IntegrityError:
+            existing = await self.active_for_user(user_id)
+            if existing is not None:
+                return existing
+            raise
         return appeal
 
     async def get(self, appeal_id: uuid.UUID) -> Appeal | None:

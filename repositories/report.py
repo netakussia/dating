@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +10,13 @@ from models import Profile, Report, ReportReason, ReportStatus, User, UserStatus
 class ReportRepository:
     def __init__(self, session: AsyncSession) -> None: self.session = session
     async def add(
-        self, reporter_id: int, target_id: int, reason: ReportReason, *, threshold: int = 3
+        self,
+        reporter_id: int,
+        target_id: int,
+        reason: ReportReason,
+        *,
+        threshold: int = 3,
+        evidence_snapshot: dict[str, object] | None = None,
     ) -> tuple[Report, bool, bool]:
         existing = await self.session.scalar(
             select(Report).where(Report.reporter_id == reporter_id, Report.target_user_id == target_id)
@@ -18,7 +26,12 @@ class ReportRepository:
 
         try:
             async with self.session.begin_nested():
-                report = Report(reporter_id=reporter_id, target_user_id=target_id, reason=reason)
+                report = Report(
+                    reporter_id=reporter_id,
+                    target_user_id=target_id,
+                    reason=reason,
+                    evidence_snapshot=evidence_snapshot,
+                )
                 self.session.add(report)
                 await self.session.flush()
 
@@ -65,7 +78,6 @@ class ReportRepository:
 
     async def claim(self, report_id, moderator_id: int) -> Report | None:
         """Claim a report for processing."""
-        from datetime import datetime, timezone
         result = await self.session.execute(
             update(Report)
             .where(
@@ -73,7 +85,7 @@ class ReportRepository:
                 Report.status == ReportStatus.PENDING,
                 (Report.assigned_to.is_(None) | (Report.assigned_to == moderator_id)),
             )
-            .values(assigned_to=moderator_id, assigned_at=datetime.now(timezone.utc))
+            .values(assigned_to=moderator_id, assigned_at=datetime.now(UTC))
             .returning(Report)
         )
         report = result.scalar_one_or_none()
@@ -85,7 +97,7 @@ class ReportRepository:
         if current.assigned_to not in {None, moderator_id}:
             return None
         current.assigned_to = moderator_id
-        current.assigned_at = datetime.now(timezone.utc)
+        current.assigned_at = datetime.now(UTC)
         await self.session.flush()
         return current
 

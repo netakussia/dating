@@ -20,8 +20,14 @@ class ReportService:
         except EligibilityError as error:
             raise ValueError(str(error)) from error
 
+        target_profile = await ProfileRepository(self.session).by_user_id(target_id)
+        evidence_snapshot = self._evidence_snapshot(target_profile)
         report, created, threshold_reached = await ReportRepository(self.session).add(
-            reporter_id, target_id, reason, threshold=self.threshold
+            reporter_id,
+            target_id,
+            reason,
+            threshold=self.threshold,
+            evidence_snapshot=evidence_snapshot,
         )
         await DiscoveryRepository(self.session).block(reporter_id, target_id)
         if created:
@@ -39,6 +45,22 @@ class ReportService:
                 details=f"Reached {self.threshold} unique reports",
             )
         return report, created, threshold_reached
+
+    @staticmethod
+    def _evidence_snapshot(profile) -> dict[str, object]:
+        """Capture report evidence before later profile edits or deletion."""
+        if profile is None:
+            return {}
+        return {
+            "name": profile.name,
+            "age": profile.age,
+            "district": profile.district,
+            "institution": profile.institution,
+            "bio": profile.bio,
+            "interests": list(profile.interests or []),
+            "photo_file_ids": list(profile.photo_file_ids or []),
+            "main_photo_file_id": profile.main_photo_file_id,
+        }
 
     async def dismiss(self, report_id, admin_id: int):
         repo = ReportRepository(self.session)

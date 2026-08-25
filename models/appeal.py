@@ -16,7 +16,12 @@ class AppealStatus(str, enum.Enum):
 class Appeal(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "appeals"
     __table_args__ = (
-        Index("ix_appeals_user_pending", "user_id", "status", postgresql_where="status = 'PENDING'"),
+        Index(
+            "uq_appeals_one_pending_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where="status = 'PENDING'",
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)

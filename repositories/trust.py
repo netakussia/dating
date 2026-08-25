@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
@@ -48,15 +49,20 @@ class TrustRepository:
         if active is not None:
             return active, False
         request = VerificationRequest(user_id=user_id, video_file_id=video_file_id)
-        self.session.add(request)
         try:
-            await self.session.flush()
-        except Exception:
-            # On any integrity/constraint error (race), try to return existing pending request.
+            nested = getattr(self.session, "begin_nested", None)
+            if nested is None:
+                self.session.add(request)
+                await self.session.flush()
+            else:
+                async with nested():
+                    self.session.add(request)
+                    await self.session.flush()
+        except IntegrityError:
+            # The savepoint keeps the outer transaction usable after a race.
             existing = await self.active_verification_for_user(user_id)
             if existing:
                 return existing, False
-            # Re-raise if we cannot recover
             raise
         return request, True
 
@@ -73,16 +79,30 @@ class TrustRepository:
         query = select(ModerationCase).where(
             ModerationCase.user_id == user_id,
             ModerationCase.case_type == case_type,
-            ModerationCase.status == ModerationCaseStatus.PENDING,
+            ModerationCase.status.in_((ModerationCaseStatus.PENDING, ModerationCaseStatus.IN_PROGRESS)),
         )
         if source_id is not None:
             query = query.where(ModerationCase.source_id == source_id)
+        else:
+            query = query.where(ModerationCase.source_id.is_(None))
         existing = await self.session.scalar(query)
         if existing:
             return existing, False
         case = ModerationCase(user_id=user_id, case_type=case_type, source_id=source_id, details=details)
-        self.session.add(case)
-        await self.session.flush()
+        try:
+            nested = getattr(self.session, "begin_nested", None)
+            if nested is None:
+                self.session.add(case)
+                await self.session.flush()
+            else:
+                async with nested():
+                    self.session.add(case)
+                    await self.session.flush()
+        except IntegrityError:
+            existing = await self.session.scalar(query)
+            if existing:
+                return existing, False
+            raise
         return case, True
 
     async def case(self, case_id: uuid.UUID) -> ModerationCase | None:

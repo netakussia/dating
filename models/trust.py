@@ -7,9 +7,11 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,6 +39,14 @@ class ModerationCaseStatus(str, enum.Enum):
 
 class VerificationRequest(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "verification_requests"
+    __table_args__ = (
+        Index(
+            "uq_verification_requests_one_pending_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where="status = 'PENDING'",
+        ),
+    )
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     video_file_id: Mapped[str] = mapped_column(String(255))
     status: Mapped[VerificationDecision] = mapped_column(
@@ -60,6 +70,16 @@ class ModerationCase(UUIDPKMixin, TimestampMixin, Base):
     source_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
     admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    __table_args__ = (
+        Index(
+            "uq_moderation_cases_one_active_event",
+            "user_id",
+            "case_type",
+            func.coalesce(source_id, ""),
+            unique=True,
+            postgresql_where="status IN ('PENDING', 'IN_PROGRESS')",
+        ),
+    )
 
 
 class PhotoModeration(UUIDPKMixin, TimestampMixin, Base):

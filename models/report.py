@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, DateTime, Enum, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base, TimestampMixin, UUIDPKMixin
@@ -34,5 +34,8 @@ class Report(UUIDPKMixin, TimestampMixin, Base):
     reason: Mapped[ReportReason] = mapped_column(Enum(ReportReason))
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[ReportStatus] = mapped_column(Enum(ReportStatus), default=ReportStatus.PENDING)
+    # Immutable profile evidence captured when the report is filed.  Existing
+    # reports from before this column deliberately remain nullable.
+    evidence_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     assigned_to: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

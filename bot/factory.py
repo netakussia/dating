@@ -30,7 +30,16 @@ def create_dispatcher(
     except TokenValidationError:
         logger.warning("BOT_TOKEN appears invalid — running in offline mode (no Telegram connection).")
         bot = None
-    dp = Dispatcher(storage=RedisStorage(redis=redis))
+    # The same Redis connection backs FSM expiry and notification deduplication.
+    dp = Dispatcher(
+        storage=RedisStorage(
+            redis=redis,
+            state_ttl=settings.fsm_state_ttl_seconds,
+            data_ttl=settings.fsm_state_ttl_seconds,
+        )
+    )
+    if bot is not None:
+        bot.notification_redis = redis
     dp.update.outer_middleware(DbSessionMiddleware(factory))
     dp.update.outer_middleware(UserSyncMiddleware())
     dp.update.outer_middleware(ProfileRequiredMiddleware())
