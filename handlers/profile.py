@@ -479,7 +479,9 @@ async def delete(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data == "profile:delete_confirm")
 async def delete_confirm(callback: CallbackQuery, session: AsyncSession) -> None:
     service = ProfileService(session)
-    await service.delete(callback.from_user.id)
+    if not await service.delete(callback.from_user.id):
+        await callback.answer("Анкета уже была удалена.", show_alert=True)
+        return
     await _update_message_text(callback.message, "✅ Анкета удалена.")
     await callback.answer()
 

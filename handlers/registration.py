@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
@@ -97,6 +98,12 @@ def _step_prompt(step: str, locale: str) -> str:
 
 async def _show_step(message: Message | CallbackQuery, state: FSMContext, step: str) -> None:
     target_msg = message.message if isinstance(message, CallbackQuery) else message
+    if isinstance(message, CallbackQuery):
+        try:
+            await target_msg.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest as exc:
+            if "message is not modified" not in str(exc).lower():
+                raise
     draft = await _get_draft(state)
     locale = draft.get("locale") or _language_code(target_msg)
     if step == "gender":
@@ -455,4 +462,3 @@ async def preview_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     msg = "❌ Регистрация отменена. Вы можете начать заново в любой момент через «👤 Моя анкета»."
     await callback.message.answer(msg, reply_markup=main_menu())
     await callback.answer()
-

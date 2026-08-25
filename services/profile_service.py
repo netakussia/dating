@@ -106,10 +106,10 @@ class ProfileService:
         await self.repo.save(profile)
         return profile
 
-    async def delete(self, user_id: int) -> None:
+    async def delete(self, user_id: int) -> bool:
         user = await self.session.get(User, user_id)
         if user is None:
-            return
+            return False
         # Appeals reference moderation cases with RESTRICT because cases must
         # remain immutable during normal operation. During account deletion,
         # remove the user's private moderation records first so that restriction
@@ -123,6 +123,7 @@ class ProfileService:
         # and prevents former matches from retaining a live Telegram contact.
         await self.session.delete(user)
         await self.session.flush()
+        return True
 
     async def add_photo(self, user_id: int, photo_file_id: str) -> Profile:
         profile = await self.get_profile(user_id)

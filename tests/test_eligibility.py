@@ -71,9 +71,27 @@ async def test_block_repository_skips_ineligible_target_without_persisting_block
     user = SimpleNamespace(status=UserStatus.ACTIVE)
     session = FakeEligibilitySession(profile=profile, user=user, block=1)
 
-    await DiscoveryRepository(session).block(1, 2)
+    created = await DiscoveryRepository(session).block(1, 2)
 
+    assert created is False
     assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_block_repository_reports_when_block_is_created():
+    profile = SimpleNamespace(
+        user_id=2,
+        is_visible=True,
+        moderation_locked=False,
+        moderation_status=ModerationStatus.CLEAR,
+    )
+    user = SimpleNamespace(status=UserStatus.ACTIVE)
+    session = FakeEligibilitySession(profile=profile, user=user, block=None)
+
+    created = await DiscoveryRepository(session).block(1, 2)
+
+    assert created is True
+    assert len(session.added) == 1
 
 
 def test_legacy_callback_data_still_parses_target_id():

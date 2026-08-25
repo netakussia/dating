@@ -17,11 +17,11 @@ class DiscoveryRepository:
             self.session.add(Dislike(from_user_id=source_id, to_user_id=target_id))
             await self.session.flush()
 
-    async def block(self, blocker_id: int, blocked_id: int) -> None:
+    async def block(self, blocker_id: int, blocked_id: int) -> bool:
         try:
             await EligibilityService(self.session).ensure_action_allowed(blocker_id, blocked_id, action="заблокировать")
         except EligibilityError:
-            return
+            return False
 
         existing = await self.session.scalar(
             select(Block).where(Block.blocker_id == blocker_id, Block.blocked_id == blocked_id)
@@ -29,6 +29,8 @@ class DiscoveryRepository:
         if existing is None:
             self.session.add(Block(blocker_id=blocker_id, blocked_id=blocked_id))
             await self.session.flush()
+            return True
+        return False
 
     async def received_likes(self, user_id: int) -> list[Like]:
         return list((await self.session.scalars(

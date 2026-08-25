@@ -1,4 +1,15 @@
-from handlers import admin, appeals, common, confessions, dating, likes, profile, registration, verification
+from handlers import (
+    admin,
+    appeals,
+    callback_fallback,
+    common,
+    confessions,
+    dating,
+    likes,
+    profile,
+    registration,
+    verification,
+)
 
 routers = (
     common.router,
@@ -10,4 +21,5 @@ routers = (
     confessions.router,
     appeals.router,
     admin.router,
+    callback_fallback.router,
 )

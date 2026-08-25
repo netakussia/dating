@@ -561,24 +561,28 @@ async def mycase_open(callback: CallbackQuery, session: AsyncSession, settings: 
         report = await ReportRepository(session).get(item_id)
         if not report:
             await callback.message.answer("Жалоба не найдена.", reply_markup=admin_nav_keyboard())
+            await _safe_callback_answer(callback, "Жалоба уже удалена.", show_alert=True)
             return
         await _render_report(callback, session, report)
     elif item_type == "case":
         case = await TrustRepository(session).case(item_id)
         if not case:
             await callback.message.answer("Кейс не найден.", reply_markup=admin_nav_keyboard())
+            await _safe_callback_answer(callback, "Кейс уже удалён.", show_alert=True)
             return
         await _render_photo_case(callback, session, case)
     elif item_type == "verify":
         req = await TrustRepository(session).verification(item_id)
         if not req:
             await callback.message.answer("Верификация не найдена.", reply_markup=admin_nav_keyboard())
+            await _safe_callback_answer(callback, "Верификация уже удалена.", show_alert=True)
             return
         await _render_verification(callback, session, req)
     elif item_type == "appeal":
         appeal = await AppealRepository(session).get(item_id)
         if not appeal:
             await callback.message.answer("Апелляция не найдена.", reply_markup=admin_nav_keyboard())
+            await _safe_callback_answer(callback, "Апелляция уже удалена.", show_alert=True)
             return
         await _render_appeal(callback, session, appeal)
     await _safe_callback_answer(callback)

@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,15 @@ def _target_id(callback: CallbackQuery) -> int | None:
         return int((callback.data or "").split(":")[1])
     except (IndexError, TypeError, ValueError):
         return None
+
+
+async def _clear_callback_keyboard(callback: CallbackQuery) -> None:
+    """Deactivate a consumed discovery card so its action cannot be repeated."""
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 
 async def show_next(message: Message, user_id: int, session: AsyncSession, settings) -> None:
@@ -116,8 +126,10 @@ async def like(callback: CallbackQuery, session: AsyncSession, settings) -> None
         await callback.answer(str(error), show_alert=True)
         return
     if not result.created:
+        await _clear_callback_keyboard(callback)
         await callback.answer("Лайк уже был отправлен.")
         return
+    await _clear_callback_keyboard(callback)
     match = await MatchService(session).create_if_mutual(callback.from_user.id, target, result.like)
     await callback.answer("Это взаимно! 🎉" if match.created else "Лайк отправлен ❤️")
     rec_svc = RecommendationService(session, weights=settings.matching_weights)
@@ -315,6 +327,7 @@ async def skip(callback: CallbackQuery, session: AsyncSession, settings) -> None
         return
     await DiscoveryRepository(session).skip(callback.from_user.id, target)
     await RecommendationService(session, weights=settings.matching_weights).skip(callback.from_user.id, target)
+    await _clear_callback_keyboard(callback)
     await callback.answer("Анкета больше не будет показана. Ищу следующую анкету...")
     await show_next(callback.message, callback.from_user.id, session, settings)
 
@@ -328,6 +341,7 @@ async def block(callback: CallbackQuery, session: AsyncSession, settings) -> Non
     if not await DiscoveryRepository(session).block(callback.from_user.id, target):
         await callback.answer("Анкета уже недоступна.", show_alert=True)
         return
+    await _clear_callback_keyboard(callback)
     await callback.answer("Пользователь заблокирован. Ищу следующую анкету...")
     rec_svc = RecommendationService(session, weights=settings.matching_weights)
     await rec_svc.remove_candidate(callback.from_user.id, target)
