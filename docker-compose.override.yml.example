@@ -1,0 +1,17 @@
+# Example override for local development to expose Redis/DB ports for GUI clients
+# Copy this file to docker-compose.override.yml (do NOT commit) when needed.
+
+version: '3.8'
+services:
+  redis:
+    ports:
+      - "6379:6379"
+  postgres:
+    ports:
+      - "5432:5432"
+  bot:
+    volumes:
+      - ./:/app:cached
+    environment:
+      - LOCAL_DEV=1
+# Note: This override is for convenience only. Do not commit docker-compose.override.yml with secrets or published ports.
