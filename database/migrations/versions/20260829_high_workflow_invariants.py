@@ -1,6 +1,6 @@
 """Add report evidence and active-workflow uniqueness invariants.
 
-Revision ID: 20260829_high_workflow_invariants
+Revision ID: 20260829_workflow_invariants
 Revises: 20260828_report_assigned
 Create Date: 2026-08-29
 """
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision = "20260829_high_workflow_invariants"
+revision = "20260829_workflow_invariants"
 down_revision = "20260828_report_assigned"
 branch_labels = None
 depends_on = None
