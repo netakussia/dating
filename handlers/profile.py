@@ -9,6 +9,7 @@ from keyboards.menu import main_menu
 from keyboards.profile import photo_management_keyboard, photo_upload_keyboard, profile_keyboard
 from models import ModerationStatus, User, UserStatus
 from services.interest_normalizer import format_interests
+from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.photo_upload_lock import photo_upload_lock
 from services.profile_service import ProfileService
@@ -325,11 +326,13 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
             await state.clear()
             return
         photo_id = message.photo[-1].file_id
+        progress = await show_photo_analysis_progress(message)
         try:
             if data.get("photo_action") == "replace":
                 old_id = _photo_at(profile, str(data.get("photo_index")))
                 if old_id is None:
                     await message.answer("Список фото изменился. Откройте управление снова.")
+                    await dismiss_photo_analysis_progress(progress)
                     await state.clear()
                     return
                 await profile_service.replace_photo(message.from_user.id, old_id, photo_id)
@@ -339,10 +342,13 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
                 session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
             ).inspect(message.from_user.id, photo_id)
         except ValueError as error:
+            await dismiss_photo_analysis_progress(progress)
             await message.answer(str(error))
         except PhotoModerationError:
+            await dismiss_photo_analysis_progress(progress)
             await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
         else:
+            await dismiss_photo_analysis_progress(progress)
             updated_profile = await profile_service.get_profile(message.from_user.id)
             if data.get("photo_action") == "add" and updated_profile and len(updated_profile.photo_file_ids) < 3:
                 await message.answer(

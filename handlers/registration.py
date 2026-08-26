@@ -15,6 +15,7 @@ from keyboards.menu import main_menu
 from keyboards.profile import photo_upload_keyboard, registration_preview_keyboard
 from services.interest_normalizer import format_interests
 from services.localization import LocalizationService
+from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.photo_upload_lock import photo_upload_lock
 from services.profile_service import ProfileService
@@ -426,16 +427,19 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
     photo_moderation = PhotoModerationService(
         session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=callback.bot
     )
+    progress = await show_photo_analysis_progress(callback.message)
     try:
         for photo_file_id in payload.photo_file_ids:
             assessment = await photo_moderation.inspect(callback.from_user.id, photo_file_id)
             flagged_no_face = flagged_no_face or not assessment.face_detected
             flagged_nsfw = flagged_nsfw or assessment.nsfw_score >= settings.nsfw_threshold
     except PhotoModerationError:
+        await dismiss_photo_analysis_progress(progress)
         await state.clear()
         await callback.message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
         await callback.answer()
         return
+    await dismiss_photo_analysis_progress(progress)
     await state.clear()
     if flagged_nsfw:
         await callback.message.answer(
