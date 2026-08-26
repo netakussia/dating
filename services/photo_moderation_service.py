@@ -144,6 +144,7 @@ class PhotoModerationService:
                     user_id=user_id,
                     reason=case_type.value,
                     case_id=str(case.id),
+                    target_callback=f"mycase:case:{case.id}",
                     details=(
                         f"provider={assessment.provider}; score={assessment.nsfw_score:.3f}; "
                         f"face_detected={assessment.face_detected}"

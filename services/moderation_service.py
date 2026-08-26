@@ -4,7 +4,17 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import ModerationCase, ModerationCaseStatus, ModerationStatus, Profile, User, UserRole, UserStatus
+from models import (
+    Appeal,
+    AppealStatus,
+    ModerationCase,
+    ModerationCaseStatus,
+    ModerationStatus,
+    Profile,
+    User,
+    UserRole,
+    UserStatus,
+)
 from repositories.trust import TrustRepository
 from utils.admin_roles import (
     can_access_moderation,
@@ -297,3 +307,43 @@ class ModerationService:
         )
         await self.session.flush()
         return True
+
+    async def restore_appeal_sanction(
+        self, appeal: Appeal, admin_id: int, *, actor_role: UserRole | None = None
+    ) -> tuple[bool, str | None]:
+        role = actor_role or await self._role_for(admin_id)
+        if not can_unban(role):
+            return False, "forbidden"
+        if appeal.status != AppealStatus.PENDING:
+            return False, "already_resolved"
+
+        result = await self.session.execute(
+            select(ModerationCase).where(
+                ModerationCase.user_id == appeal.user_id,
+                ModerationCase.status == ModerationCaseStatus.IN_PROGRESS,
+            )
+        )
+        if result.scalars().first() is not None:
+            return False, "other_open_sanction"
+
+        user = await self.session.get(User, appeal.user_id)
+        if user is None or user.status not in {UserStatus.BANNED, UserStatus.SUSPENDED}:
+            return False, "not_restricted"
+        profile = await self.session.scalar(select(Profile).where(Profile.user_id == appeal.user_id))
+        user.status = UserStatus.ACTIVE
+        if profile:
+            profile.moderation_locked = False
+            profile.moderation_status = ModerationStatus.CLEAR
+            profile.is_visible = True
+        appeal.status = AppealStatus.APPROVED
+        appeal.admin_id = admin_id
+        appeal.reviewed_at = datetime.now(UTC)
+        await self.repo.log(
+            admin_id,
+            "appeal_restored",
+            target_type="appeal",
+            target_id=str(appeal.id),
+            target_user_id=appeal.user_id,
+        )
+        await self.session.flush()
+        return True, None

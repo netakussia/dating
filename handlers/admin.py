@@ -394,6 +394,16 @@ async def _render_admin_browse_profile(
     await send_profile_gallery(callback.message, profile, caption, markup)
 
 
+async def _next_browse_user(session: AsyncSession, current_user_id: int | None = None) -> User | None:
+    statement = select(User).join(Profile).order_by(User.id).limit(1)
+    if current_user_id is not None:
+        statement = select(User).join(Profile).where(User.id > current_user_id).order_by(User.id).limit(1)
+    target = await session.scalar(statement)
+    if target is None and current_user_id is not None:
+        target = await session.scalar(select(User).join(Profile).order_by(User.id).limit(1))
+    return target
+
+
 @router.message(Command("admin"))
 async def admin(message: Message, session: AsyncSession, settings: Settings) -> None:
     if not allowed(message.from_user.id, settings):
@@ -407,10 +417,11 @@ async def admin(message: Message, session: AsyncSession, settings: Settings) -> 
 
 
 @router.callback_query(F.data == "admin:menu")
-async def admin_menu(callback: CallbackQuery, session: AsyncSession, settings: Settings) -> None:
+async def admin_menu(callback: CallbackQuery, session: AsyncSession, settings: Settings, state: FSMContext) -> None:
     if not allowed(callback.from_user.id, settings):
         await callback.answer("Недостаточно прав", show_alert=True)
         return
+    await state.clear()
     role = await _role_for_admin(session, callback.from_user.id, settings)
     await _safe_edit_message_text(
         callback.message,
@@ -458,9 +469,12 @@ async def section_stats(callback: CallbackQuery, session: AsyncSession, settings
 
 
 @router.callback_query(F.data == "admin:section:administration")
-async def section_administration(callback: CallbackQuery, session: AsyncSession, settings: Settings) -> None:
+async def section_administration(
+    callback: CallbackQuery, session: AsyncSession, settings: Settings, state: FSMContext
+) -> None:
     if not await _require_admin_capability(callback, session, settings, can_manage_admins):
         return
+    await state.clear()
     await _safe_edit_message_text(
         callback.message,
         "⚙️ <b>Панель администратора</b>\nВыберите действие:",
@@ -627,15 +641,14 @@ async def reports(callback: CallbackQuery, session: AsyncSession, settings: Sett
 async def admin_browse(callback: CallbackQuery, session: AsyncSession, settings: Settings) -> None:
     if not await _require_admin_capability(callback, session, settings, can_view_all_profiles):
         return
-    profiles = (await session.scalars(select(User).join(Profile).order_by(User.id))).all()
-    if not profiles:
+    target = await _next_browse_user(session)
+    if target is None:
         await callback.message.answer(
             "👥 Анкеты отсутствуют.",
             reply_markup=admin_nav_keyboard(refresh_callback="admin:browse", back_callback="admin:section:users"),
         )
         await _safe_callback_answer(callback)
         return
-    target = profiles[0]
     role = await _role_for_admin(session, callback.from_user.id, settings)
     await _render_admin_browse_profile(callback, session, target.id, role)
     await _safe_callback_answer(callback)
@@ -652,24 +665,14 @@ async def admin_browse_next(callback: CallbackQuery, session: AsyncSession, sett
             current_user_id = int(parts[3])
         except ValueError:
             current_user_id = None
-    profiles = (await session.scalars(select(User).join(Profile).order_by(User.id))).all()
-    if not profiles:
+    target = await _next_browse_user(session, current_user_id)
+    if target is None:
         await callback.message.answer(
             "👥 Анкеты отсутствуют.",
             reply_markup=admin_nav_keyboard(refresh_callback="admin:browse", back_callback="admin:section:users"),
         )
         await _safe_callback_answer(callback)
         return
-    if current_user_id is None:
-        target = profiles[0]
-    else:
-        ordered_ids = [user.id for user in profiles]
-        try:
-            idx = ordered_ids.index(current_user_id)
-        except ValueError:
-            target = profiles[0]
-        else:
-            target = profiles[(idx + 1) % len(profiles)]
     role = await _role_for_admin(session, callback.from_user.id, settings)
     await _render_admin_browse_profile(callback, session, target.id, role)
     await _safe_callback_answer(callback, "Следующая анкета")
@@ -768,6 +771,7 @@ async def profile_moderation_action(callback: CallbackQuery, session: AsyncSessi
         user_id=user_id,
         details=f"Action: {action}; moderator: {callback.from_user.id}",
         event_key=f"profile-{action}:{user_id}",
+        target_callback="admin:browse",
     )
     await _safe_edit_message_text(
         callback.message,
@@ -898,6 +902,7 @@ async def moderation_case(callback: CallbackQuery, session: AsyncSession, settin
             case_id=str(case.id),
             details=f"Moderator: {callback.from_user.id}",
             event_key=f"case-claimed:{case.id}",
+            target_callback=f"mycase:case:{case.id}",
         )
         await callback.message.edit_reply_markup(reply_markup=case_decision_keyboard(str(case.id)))
         await callback.answer("Кейс закреплён за вами.")
@@ -1126,6 +1131,7 @@ async def moderate(callback: CallbackQuery, session: AsyncSession, settings: Set
         case_id=str(report.id),
         details=f"Decision: {action}; moderator: {callback.from_user.id}",
         event_key=f"report-decision:{report.id}",
+        target_callback=f"mycase:report:{report.id}",
     )
     await _safe_edit_message_text(
         callback.message,
@@ -1277,6 +1283,7 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
         case_id=str(appeal.id),
         details=f"Decision: {action}; moderator: {callback.from_user.id}",
         event_key=f"appeal-decision:{appeal.id}",
+        target_callback=f"mycase:appeal:{appeal.id}",
     )
     await _safe_edit_message_text(
         callback.message,

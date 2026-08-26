@@ -94,6 +94,7 @@ async def verification_video(message: Message, state: FSMContext, session: Async
         username=message.from_user.username,
         reason="verification request",
         case_id=str(request.id),
+        target_callback=f"mycase:verify:{request.id}",
         details=f"Verification case: {compact_display_id(request.id)}",
     )
     notifier = NotificationService(message.bot)

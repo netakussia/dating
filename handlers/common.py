@@ -130,10 +130,10 @@ async def help_(message: Message, settings, session: AsyncSession) -> None:
         "alpha",
     )
     markup.inline_keyboard.append(
-        [InlineKeyboardButton(text="� Моя анкета", callback_data="promo:my_profile")]
+        [InlineKeyboardButton(text="👤 Моя анкета", callback_data="promo:my_profile")]
     )
     markup.inline_keyboard.append(
-        [InlineKeyboardButton(text="�🐛 Сообщить о проблеме", callback_data="bug_report:start")]
+        [InlineKeyboardButton(text="🐛 Сообщить о проблеме", callback_data="bug_report:start")]
     )
     await message.answer(
         "❓ <b>Помощь</b>\n"

@@ -280,6 +280,7 @@ class InternalNotificationService:
         details: str | None = None,
         photo_file_ids: Sequence[str] | None = None,
         event_key: str | None = None,
+        target_callback: str | None = None,
     ) -> bool:
         user_label = f"@{username}" if username else "без username" if user_id is not None else "—"
         lines = ["🚩 MODERATION", "", title]
@@ -294,7 +295,9 @@ class InternalNotificationService:
             lines.append("")
             lines.append(_truncate_text(details, 600))
         markup = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Открыть кейс", callback_data="admin:reports")]]
+            inline_keyboard=[[
+                InlineKeyboardButton(text="Открыть кейс", callback_data=target_callback or "admin:reports")
+            ]]
         )
         text = "\n".join(lines)
         if photo_file_ids:

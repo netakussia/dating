@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from handlers.admin import mycase_open
-from handlers.callback_fallback import outdated_callback
+from handlers.callback_fallback import no_state_message, outdated_callback
 from handlers.profile import delete_confirm
 from repositories.report import ReportRepository
 from services.profile_service import ProfileService
@@ -52,3 +52,13 @@ async def test_deleted_profile_confirmation_does_not_report_success(monkeypatch)
 
     callback.answer.assert_awaited_once_with("Анкета уже была удалена.", show_alert=True)
     message.edit_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_state_message_returns_to_main_menu():
+    message = SimpleNamespace(answer=AsyncMock())
+
+    await no_state_message(message)
+
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.kwargs["reply_markup"] is not None

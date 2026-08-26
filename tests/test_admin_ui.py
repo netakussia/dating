@@ -1,4 +1,6 @@
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest
@@ -163,6 +165,69 @@ async def test_notification_service_failure_does_not_break_main_operation():
 
     assert await service.safe_send(123, "alert") is False
     assert await service.safe_send(456, "other") is False
+
+
+@pytest.mark.asyncio
+async def test_leaving_admin_administration_clears_broadcast_state(monkeypatch):
+    from handlers.admin import section_administration
+
+    monkeypatch.setattr("handlers.admin._require_admin_capability", AsyncMock(return_value=True))
+    monkeypatch.setattr("handlers.admin._safe_edit_message_text", AsyncMock())
+    callback = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=1), message=SimpleNamespace())
+    state = SimpleNamespace(clear=AsyncMock())
+    settings = SimpleNamespace()
+
+    await section_administration(callback, session=SimpleNamespace(), settings=settings, state=state)
+
+    state.clear.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("callback_data", "expected"),
+    [
+        ("mycase:verify:request", "mycase:verify:request"),
+        ("mycase:case:case", "mycase:case:case"),
+        ("mycase:report:report", "mycase:report:report"),
+        ("mycase:appeal:appeal", "mycase:appeal:appeal"),
+    ],
+)
+async def test_moderation_notification_uses_case_specific_callback(callback_data, expected):
+    from services.notification_service import InternalNotificationService
+
+    settings = Settings(
+        bot_token="x" * 30,
+        daily_secret_salt="y" * 20,
+        meanima_internal_chat_id=42,
+    )
+    bot = FakeBot()
+
+    await InternalNotificationService(bot, settings).send_moderation_event(
+        "moderation event", case_id=callback_data, target_callback=callback_data, event_key=callback_data
+    )
+
+    markup = bot.sent[0][2]["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == expected
+
+
+@pytest.mark.asyncio
+async def test_admin_browse_fetches_one_profile_at_a_time():
+    from handlers.admin import _next_browse_user
+
+    class Session:
+        def __init__(self):
+            self.queries = []
+
+        async def scalar(self, statement):
+            self.queries.append(statement)
+            return SimpleNamespace(id=20)
+
+    session = Session()
+
+    target = await _next_browse_user(session, current_user_id=10)
+
+    assert target.id == 20
+    assert len(session.queries) == 1
 
 
 @pytest.mark.asyncio

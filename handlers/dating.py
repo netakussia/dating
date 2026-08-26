@@ -388,6 +388,7 @@ async def report_reason(callback: CallbackQuery, session: AsyncSession, settings
         username=callback.from_user.username,
         reason=report_reason_value.value,
         case_id=str(report.id),
+        target_callback=f"mycase:report:{report.id}",
         details=f"Target user: {user_display_name(target)} | created={created}",
         photo_file_ids=profile_photo_ids(profile),
     )
@@ -411,6 +412,7 @@ async def report_reason(callback: CallbackQuery, session: AsyncSession, settings
             username=None,
             reason=f"3 reports ({settings.report_threshold})",
             case_id=str(report.id),
+            target_callback=f"mycase:report:{report.id}",
             details="Автоматическая заморозка анкеты после достижения порога жалоб.",
             photo_file_ids=profile_photo_ids(profile),
         )

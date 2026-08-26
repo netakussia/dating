@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from models import UserStatus
 from repositories.user import UserRepository
+from states.appeal import AppealState
 
 
 class UserSyncMiddleware(BaseMiddleware):
@@ -20,6 +21,14 @@ class UserSyncMiddleware(BaseMiddleware):
         if user and session:
             db_user = await UserRepository(session).get_or_create(user.id, user.username)
             if db_user.status == UserStatus.BANNED:
+                state = data.get("state")
+                current_state = await state.get_state() if state is not None else None
+                appeal_allowed = isinstance(event, Message) and (
+                    (event.text or "") == "🆘 Апелляция" or current_state == AppealState.enter_text.state
+                )
+                if appeal_allowed:
+                    data["current_user"] = db_user
+                    return await handler(event, data)
                 if isinstance(event, CallbackQuery):
                     await event.answer("🚫 Ваш аккаунт заблокирован. Доступ к боту ограничен.", show_alert=True)
                 elif isinstance(event, Message):

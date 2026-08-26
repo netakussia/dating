@@ -3,7 +3,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from models import ModerationCaseStatus, ModerationCaseType, ModerationStatus, UserRole, UserStatus, VerificationStatus
+from models import (
+    AppealStatus,
+    ModerationCaseStatus,
+    ModerationCaseType,
+    ModerationStatus,
+    UserRole,
+    UserStatus,
+    VerificationStatus,
+)
 from repositories.trust import TrustRepository
 from services.moderation_service import ModerationService
 from services.photo_moderation_service import PhotoAssessment, PhotoModerationService
@@ -69,6 +77,46 @@ async def test_ban_and_unban_are_idempotent():
     assert await service.unban(7, 99)
     assert user.status == UserStatus.ACTIVE
     assert not await service.unban(7, 99)
+
+
+@pytest.mark.asyncio
+async def test_approve_appeal_restores_user_profile_and_marks_appeal():
+    user = SimpleNamespace(status=UserStatus.SUSPENDED, role=UserRole.OWNER)
+    profile = SimpleNamespace(
+        is_visible=False,
+        moderation_locked=True,
+        moderation_status=ModerationStatus.UNDER_REVIEW,
+    )
+    appeal = SimpleNamespace(user_id=7, id="appeal-1", status=AppealStatus.PENDING, admin_id=None)
+
+    class AppealSession:
+        async def get(self, _model, _identity):
+            return user
+
+        async def scalar(self, _query):
+            return profile
+
+        async def execute(self, _query):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
+
+        def add(self, _value):
+            return None
+
+        async def flush(self):
+            return None
+
+    service = ModerationService(AppealSession())
+    service.repo.log = AsyncMock()
+
+    restored, reason = await service.restore_appeal_sanction(appeal, 99, actor_role=UserRole.OWNER)
+
+    assert (restored, reason) == (True, None)
+    assert user.status == UserStatus.ACTIVE
+    assert profile.is_visible is True
+    assert profile.moderation_locked is False
+    assert profile.moderation_status == ModerationStatus.CLEAR
+    assert appeal.status == AppealStatus.APPROVED
+    service.repo.log.assert_awaited_once()
 
 
 @pytest.mark.asyncio

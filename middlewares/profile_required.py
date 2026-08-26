@@ -8,6 +8,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 from services.profile_service import ProfileService
+from states.appeal import AppealState
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,8 @@ class ProfileRequiredMiddleware(BaseMiddleware):
         if isinstance(event, Message):
             return (event.text or "") in cls.message_actions
         if isinstance(event, CallbackQuery):
-            return (event.data or "").startswith(cls.callback_prefixes)
+            data = event.data or ""
+            return data != "profile:create" and data.startswith(cls.callback_prefixes)
         return False
 
     @staticmethod
@@ -67,6 +69,12 @@ class ProfileRequiredMiddleware(BaseMiddleware):
         )
         if user_id is None or session is None:
             logger.debug("ProfileRequiredMiddleware: insufficient context, passing through")
+            return await handler(event, data)
+        state = data.get("state")
+        current_state = await state.get_state() if state is not None else None
+        if isinstance(event, Message) and (
+            (event.text or "") == "🆘 Апелляция" or current_state == AppealState.enter_text.state
+        ):
             return await handler(event, data)
         # If the profile exists, continue; otherwise prompt to create one
         profile = await ProfileService(session).get_profile(user_id)
