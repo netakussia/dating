@@ -93,7 +93,7 @@ async def _reset_user(session_factory, redis_url: str, user_id: int) -> None:
     from models.admin_log import AdminLog
     from models.appeal import Appeal
     from models.block import Block
-    from models.confession import Confession, ConfessionDailyLimit
+    from models.confession import Confession
     from models.dislike import Dislike
     from models.like import Like
     from models.match import Match
@@ -131,14 +131,8 @@ async def _reset_user(session_factory, redis_url: str, user_id: int) -> None:
             await session.execute(delete(PhotoModeration).where(PhotoModeration.user_id == user_id))
             await session.execute(
                 delete(Confession).where(
-                    or_(
-                        Confession.sender_id == user_id,
-                        Confession.receiver_id == user_id,
-                    )
+                    Confession.recipient_id == user_id
                 )
-            )
-            await session.execute(
-                delete(ConfessionDailyLimit).where(ConfessionDailyLimit.user_id == user_id)
             )
             await session.execute(
                 delete(AdminLog).where(

@@ -25,3 +25,8 @@ async def test_rate_limit_allows_update_when_redis_is_unavailable():
 
     assert result == "handled"
     assert handled
+
+    second_result = await middleware(handler, object(), {"event_from_user": SimpleNamespace(id=42)})
+
+    assert second_result is None
+    assert handled is True

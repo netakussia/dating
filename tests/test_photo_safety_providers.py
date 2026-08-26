@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from config import Settings
 from services.photo_moderation_service import (
     PhotoAssessment,
     PhotoModerationService,
@@ -29,6 +30,23 @@ def safety_settings(**changes):
     }
     values.update(changes)
     return SimpleNamespace(**values)
+
+
+def test_photo_safety_default_is_fail_closed():
+    settings = Settings(_env_file=None, bot_token="x" * 30, daily_secret_salt="y" * 20)
+
+    assert settings.photo_safety_provider == "ml"
+
+
+def test_production_rejects_non_ml_photo_safety_provider():
+    with pytest.raises(ValueError, match="PHOTO_SAFETY_PROVIDER"):
+        Settings(
+            _env_file=None,
+            bot_token="x" * 30,
+            daily_secret_salt="y" * 20,
+            environment="production",
+            photo_safety_provider="heuristic",
+        )
 
 
 def image_bytes(size=(100, 100), image_format="JPEG"):

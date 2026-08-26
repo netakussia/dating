@@ -69,8 +69,11 @@ class ReportRepository:
             )
             return existing, False, False
         return report, True, threshold_reached
-    async def pending(self) -> list[Report]:
-        statement = select(Report).where(Report.status == ReportStatus.PENDING).order_by(Report.created_at)
+    async def pending(self, moderator_id: int | None = None) -> list[Report]:
+        statement = select(Report).where(Report.status == ReportStatus.PENDING)
+        if moderator_id is not None:
+            statement = statement.where((Report.assigned_to == moderator_id) | (Report.assigned_to.is_(None)))
+        statement = statement.order_by(Report.created_at)
         return list((await self.session.scalars(statement)).all())
 
     async def get(self, report_id):
@@ -100,6 +103,22 @@ class ReportRepository:
         current.assigned_at = datetime.now(UTC)
         await self.session.flush()
         return current
+
+    async def release(self, report_id, moderator_id: int, *, override: bool = False) -> Report | None:
+        conditions = [
+            Report.id == report_id,
+            Report.status == ReportStatus.PENDING,
+            Report.assigned_to.is_not(None),
+        ]
+        if not override:
+            conditions.append(Report.assigned_to == moderator_id)
+        result = await self.session.execute(
+            update(Report)
+            .where(*conditions)
+            .values(assigned_to=None, assigned_at=None)
+            .returning(Report)
+        )
+        return result.scalar_one_or_none()
 
     async def resolve(self, report_id, status: ReportStatus) -> Report | None:
         result = await self.session.execute(

@@ -89,6 +89,15 @@ class FakeDuplicateReportSession(FakeReportSession):
         raise IntegrityError("duplicate key value violates unique constraint", {}, None)
 
 
+class FakePendingReportSession:
+    def __init__(self):
+        self.statement = None
+
+    async def scalars(self, statement):
+        self.statement = statement
+        return SimpleNamespace(all=lambda: [])
+
+
 @pytest.mark.asyncio
 async def test_report_threshold_hides_profile_and_suspends_user():
     session = FakeReportSession(report_count=2)
@@ -128,3 +137,14 @@ async def test_report_above_threshold_does_not_repeat_suspension_side_effects():
     assert created
     assert not threshold_reached
     assert len(session.executed_updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_reports_filter_out_other_moderators_claims():
+    session = FakePendingReportSession()
+
+    await ReportRepository(session).pending(moderator_id=202)
+
+    statement = str(session.statement)
+    assert "assigned_to" in statement
+    assert 202 in session.statement.compile().params.values()

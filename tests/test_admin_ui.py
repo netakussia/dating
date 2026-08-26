@@ -231,6 +231,25 @@ async def test_admin_browse_fetches_one_profile_at_a_time():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case_type", ["NSFW", "NO_FACE"])
+async def test_photo_queue_accepts_supported_case_types(monkeypatch, case_type):
+    from handlers.admin import _show_next_photo_case
+    from models import ModerationCaseType
+    from repositories.trust import TrustRepository
+
+    item = SimpleNamespace(case_type=getattr(ModerationCaseType, case_type))
+    monkeypatch.setattr(TrustRepository, "pending_cases", AsyncMock(return_value=[item]))
+    render_photo_case = AsyncMock()
+    monkeypatch.setattr("handlers.admin._render_photo_case", render_photo_case)
+    callback = SimpleNamespace(message=SimpleNamespace(delete=AsyncMock()), from_user=SimpleNamespace(id=1))
+
+    await _show_next_photo_case(callback, SimpleNamespace())
+
+    callback.message.delete.assert_awaited_once()
+    render_photo_case.assert_awaited_once_with(callback, SimpleNamespace(), item)
+
+
+@pytest.mark.asyncio
 async def test_internal_notification_disables_after_chat_not_found():
     settings = Settings(
         bot_token="x" * 30,

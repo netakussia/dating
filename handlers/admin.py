@@ -60,6 +60,7 @@ from utils.admin_roles import (
     can_access_moderation,
     can_manage_admins,
     can_override_appeal_assignment,
+    can_override_case,
     can_unban,
     can_unfreeze,
     can_view_all_profiles,
@@ -204,7 +205,7 @@ async def _show_next_report(callback: CallbackQuery, session: AsyncSession) -> N
         await callback.message.delete()
     except Exception:
         pass
-    items = await ReportRepository(session).pending()
+    items = await ReportRepository(session).pending(callback.from_user.id)
     if not items:
         await callback.message.answer(
             "📭 Очередь жалоб пуста.",
@@ -236,7 +237,6 @@ async def _render_photo_case(callback: CallbackQuery, session: AsyncSession, ite
         markup = case_keyboard(str(item.id))
     else:
         markup = admin_nav_keyboard(refresh_callback="admin:nsfw", back_callback="admin:section:moderation")
-
     photos = ordered_photo_ids(profile) if profile else []
     if photos:
         await send_profile_gallery(callback.message, profile, caption, markup)
@@ -266,7 +266,7 @@ async def _show_next_photo_case(callback: CallbackQuery, session: AsyncSession) 
     items = [
         item
         for item in items
-        if item.case_type in {ModerationCaseType.NSFW, ModerationCaseType.NO_FACE, ModerationCaseType.PHOTO_RETAKE}
+        if item.case_type in {ModerationCaseType.NSFW, ModerationCaseType.NO_FACE}
     ]
     if not items:
         await callback.message.answer(
@@ -808,12 +808,43 @@ async def verification_decision(callback: CallbackQuery, session: AsyncSession, 
             "approve": VerificationDecision.APPROVED,
             "reject": VerificationDecision.REJECTED,
             "retake": VerificationDecision.RETAKE_REQUESTED,
-        }[action]
+        }.get(action)
+        if decision is None and action != "release":
+            raise KeyError(action)
         request_id = uuid.UUID(raw_id)
     except (KeyError, ValueError):
         await callback.answer("Некорректное решение", show_alert=True)
         return
-    request, changed = await VerificationService(session).decide(request_id, callback.from_user.id, decision)
+    actor_role = await _role_for_admin(session, callback.from_user.id, settings)
+    if action == "release":
+        request, changed = await VerificationService(session).release(
+            request_id, callback.from_user.id, actor_role=actor_role
+        )
+        if not changed:
+            await callback.answer("Заявка уже освобождена или недоступна.", show_alert=True)
+            return
+        await TrustRepository(session).log(
+            callback.from_user.id,
+            "VERIFICATION_RELEASED",
+            target_type="verification",
+            target_id=str(request.id),
+            target_user_id=request.user_id,
+        )
+        await _safe_edit_message_text(
+            callback.message,
+            "✅ Верификация освобождена и возвращена в общую очередь.",
+            reply_markup=admin_nav_keyboard(
+                refresh_callback="admin:verifications", back_callback="admin:section:moderation"
+            ),
+        )
+        await _safe_callback_answer(callback)
+        return
+    request, changed = await VerificationService(session).decide(
+        request_id,
+        callback.from_user.id,
+        decision,
+        actor_role=actor_role,
+    )
     if not changed:
         handled_by = await _admin_label(session, request.admin_id if request else None)
         await callback.answer(f"Эта верификация уже обработана модератором {handled_by}.", show_alert=True)
@@ -906,6 +937,22 @@ async def moderation_case(callback: CallbackQuery, session: AsyncSession, settin
         )
         await callback.message.edit_reply_markup(reply_markup=case_decision_keyboard(str(case.id)))
         await callback.answer("Кейс закреплён за вами.")
+        return
+    if action == "release":
+        case, changed, reason = await service.release_case(
+            case_id, callback.from_user.id, moderator_id=callback.from_user.id
+        )
+        if not changed:
+            await callback.answer(reason or "Кейс уже освобождён или недоступен.", show_alert=True)
+            return
+        await _safe_edit_message_text(
+            callback.message,
+            "✅ Кейс освобождён и возвращён в общую очередь.",
+            reply_markup=admin_nav_keyboard(
+                refresh_callback="admin:nsfw", back_callback="admin:section:moderation"
+            ),
+        )
+        await _safe_callback_answer(callback)
         return
     if action not in {"restore", "retake", "reject"}:
         await callback.answer("Некорректное решение по кейсу.", show_alert=True)
@@ -1051,6 +1098,36 @@ async def moderate(callback: CallbackQuery, session: AsyncSession, settings: Set
         )
         await callback.message.edit_reply_markup(reply_markup=moderation_decision_keyboard(str(report.id)))
         await callback.answer("Жалоба закреплена за вами.")
+        return
+    if len(parts) == 3 and parts[1] == "release":
+        _, _, raw_id = parts
+        try:
+            report_id = uuid.UUID(raw_id)
+        except ValueError:
+            await callback.answer("Некорректная жалоба", show_alert=True)
+            return
+        role = await _role_for_admin(session, callback.from_user.id, settings)
+        released = await ReportRepository(session).release(
+            report_id, callback.from_user.id, override=can_override_case(role)
+        )
+        if released is None:
+            await callback.answer("Жалоба уже освобождена или недоступна.", show_alert=True)
+            return
+        await TrustRepository(session).log(
+            callback.from_user.id,
+            "REPORT_RELEASED",
+            target_type="report",
+            target_id=str(released.id),
+            target_user_id=released.target_user_id,
+        )
+        await _safe_edit_message_text(
+            callback.message,
+            "✅ Жалоба освобождена и возвращена в общую очередь.",
+            reply_markup=admin_nav_keyboard(
+                refresh_callback="admin:reports", back_callback="admin:section:moderation"
+            ),
+        )
+        await _safe_callback_answer(callback)
         return
     if len(parts) == 4 and parts[1] == "execute":
         _, _, action, raw_id = parts
@@ -1217,6 +1294,27 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
         return
     actor_role = await _role_for_admin(session, callback.from_user.id, settings)
     override = can_override_appeal_assignment(actor_role)
+    if action == "release":
+        released = await repo.release(appeal_id, callback.from_user.id, override=override)
+        if released is None:
+            await callback.answer("Апелляция уже освобождена или недоступна.", show_alert=True)
+            return
+        await TrustRepository(session).log(
+            callback.from_user.id,
+            "APPEAL_RELEASED",
+            target_type="appeal",
+            target_id=str(released.id),
+            target_user_id=released.user_id,
+        )
+        await _safe_edit_message_text(
+            callback.message,
+            "✅ Апелляция освобождена и возвращена в общую очередь.",
+            reply_markup=admin_nav_keyboard(
+                refresh_callback="admin:appeals", back_callback="admin:section:moderation"
+            ),
+        )
+        await _safe_callback_answer(callback)
+        return
     if appeal.assigned_to != callback.from_user.id and not override:
         await callback.answer("Сначала возьмите апелляцию в работу.", show_alert=True)
         return

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
         ):
             if name in explicit:
                 object.__setattr__(self, name, explicit[name])
+        if self.environment.lower() in {"production", "prod", "staging"} and self.photo_safety_provider != "ml":
+            raise ValueError("PHOTO_SAFETY_PROVIDER must be 'ml' in production-like environments.")
 
     bot_token: str = Field(..., min_length=20)
     database_url: str = "postgresql+asyncpg://postgres:postgres@postgres:5432/dating_db"
@@ -45,7 +47,11 @@ class Settings(BaseSettings):
     document_base_url: str = Field(default="https://example.com/me-anima/docs", alias="DOCUMENT_BASE_URL")
     log_level: str = "INFO"
     nsfw_threshold: float = 0.85
-    photo_safety_provider: Literal["ml", "heuristic", "disabled"] = "heuristic"
+    photo_safety_provider: Literal["ml", "heuristic", "disabled"] = "ml"
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("ENVIRONMENT", "ENV"),
+    )
     nsfw_model_path: str = "/models/open_nsfw.onnx"
     face_model_path: str = "/models/face_detection_yunet_2023mar.onnx"
     face_detection_threshold: float = Field(default=0.5, ge=0.0, le=1.0)

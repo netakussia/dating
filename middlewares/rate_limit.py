@@ -1,4 +1,5 @@
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 class RateLimitMiddleware(BaseMiddleware):
     def __init__(self, redis: Redis) -> None:
         self.redis = redis
+        self._fallback_last_seen: dict[int, float] = {}
 
     async def __call__(
         self, handler: Callable[..., Awaitable[Any]], event: TelegramObject, data: dict[str, Any]
@@ -24,9 +26,14 @@ class RateLimitMiddleware(BaseMiddleware):
         try:
             allowed = await self.redis.set(key, "1", ex=1, nx=True)
         except RedisError as error:
-            # Rate limiting is anti-abuse state, not a reason to make the bot
-            # unavailable when Redis is temporarily down.
-            logger.warning("Rate limiter unavailable; allowing update: %s", error)
+            # Keep a small local emergency limit while Redis is unavailable.
+            # This preserves basic availability without leaving every process open to bursts.
+            now = time.monotonic()
+            last_seen = self._fallback_last_seen.get(user.id)
+            if last_seen is not None and now - last_seen < 1:
+                return None
+            self._fallback_last_seen[user.id] = now
+            logger.warning("Rate limiter unavailable; using local fallback: %s", error)
             return await handler(event, data)
         if allowed:
             return await handler(event, data)

@@ -78,9 +78,15 @@ class NotificationService:
         shared_key = f"{user_id}:{dedupe_key}" if dedupe_key else None
         lock = None
         if shared_key:
-            acquired, lock = await self._acquire_delivery(shared_key, dedupe_window_seconds)
-            if not acquired:
-                return False
+            try:
+                acquired, lock = await self._acquire_delivery(shared_key, dedupe_window_seconds)
+            except Exception:
+                logger.warning("Notification dedupe unavailable; sending without Redis lock.", exc_info=True)
+                shared_key = None
+                lock = None
+            else:
+                if not acquired:
+                    return False
         if dedupe_key and getattr(self.bot, "notification_redis", None) is None:
             cache_key = (user_id, dedupe_key)
             now = time.monotonic()
@@ -89,16 +95,22 @@ class NotificationService:
                 return False
         try:
             await self.bot.send_message(user_id, text, reply_markup=reply_markup)
-            if dedupe_key and getattr(self.bot, "notification_redis", None) is None:
-                self._recent_alerts[(user_id, dedupe_key)] = time.monotonic()
-            if shared_key:
-                await self._finish_delivery(shared_key, lock, success=True, window=dedupe_window_seconds)
-            return True
         except Exception:
             if shared_key:
-                await self._finish_delivery(shared_key, lock, success=False, window=dedupe_window_seconds)
+                try:
+                    await self._finish_delivery(shared_key, lock, success=False, window=dedupe_window_seconds)
+                except Exception:
+                    logger.warning("Notification dedupe cleanup failed after delivery error.", exc_info=True)
             logger.warning("Telegram notification delivery failed", extra={"user_id": user_id}, exc_info=True)
             return False
+        if dedupe_key and getattr(self.bot, "notification_redis", None) is None:
+            self._recent_alerts[(user_id, dedupe_key)] = time.monotonic()
+        if shared_key:
+            try:
+                await self._finish_delivery(shared_key, lock, success=True, window=dedupe_window_seconds)
+            except Exception:
+                logger.warning("Notification dedupe cleanup failed after successful delivery.", exc_info=True)
+        return True
 
 
 class InternalNotificationService:

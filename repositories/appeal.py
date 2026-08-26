@@ -70,6 +70,22 @@ class AppealRepository:
         await self.session.flush()
         return current
 
+    async def release(self, appeal_id: uuid.UUID, moderator_id: int, *, override: bool = False) -> Appeal | None:
+        conditions = [
+            Appeal.id == appeal_id,
+            Appeal.status == AppealStatus.PENDING,
+            Appeal.assigned_to.is_not(None),
+        ]
+        if not override:
+            conditions.append(Appeal.assigned_to == moderator_id)
+        result = await self.session.execute(
+            update(Appeal)
+            .where(*conditions)
+            .values(assigned_to=None)
+            .returning(Appeal)
+        )
+        return result.scalar_one_or_none()
+
     async def resolve(self, appeal_id: uuid.UUID, status: AppealStatus, admin_id: int) -> Appeal | None:
         result = await self.session.execute(
             update(Appeal)

@@ -1,12 +1,13 @@
 import uuid
 from datetime import UTC
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Profile, VerificationDecision, VerificationRequest, VerificationStatus
+from models import Profile, User, UserRole, VerificationDecision, VerificationRequest, VerificationStatus
 from repositories.trust import TrustRepository
 from services.trust_score_service import TrustScoreService
+from utils.admin_roles import can_override_case, normalize_admin_role
 
 
 class VerificationService:
@@ -56,17 +57,35 @@ class VerificationService:
         return current
 
     async def decide(
-        self, request_id: uuid.UUID, admin_id: int, decision: VerificationDecision, comment: str | None = None
+        self,
+        request_id: uuid.UUID,
+        admin_id: int,
+        decision: VerificationDecision,
+        comment: str | None = None,
+        *,
+        actor_role: UserRole | None = None,
     ):
+        role = actor_role or normalize_admin_role(getattr(await self.session.get(User, admin_id), "role", None))
+        conditions = [
+            VerificationRequest.id == request_id,
+            VerificationRequest.status == VerificationDecision.PENDING,
+        ]
+        if not can_override_case(role):
+            conditions.append(
+                or_(
+                    VerificationRequest.assigned_to.is_(None),
+                    VerificationRequest.assigned_to == admin_id,
+                )
+            )
         result = await self.session.execute(
             update(VerificationRequest)
-            .where(VerificationRequest.id == request_id, VerificationRequest.status == VerificationDecision.PENDING)
+            .where(*conditions)
             .values(status=decision, admin_id=admin_id, comment=comment)
             .returning(VerificationRequest)
         )
         request = result.scalar_one_or_none()
         if request is None:
-            return None, False
+            return await self.repo.verification(request_id), False
         profile = await self.session.scalar(select(Profile).where(Profile.user_id == request.user_id))
         if profile:
             profile.verification_status = {
@@ -87,3 +106,26 @@ class VerificationService:
         )
         await self.session.flush()
         return request, True
+
+    async def release(
+        self, request_id: uuid.UUID, admin_id: int, *, actor_role: UserRole | None = None
+    ) -> tuple[VerificationRequest | None, bool]:
+        role = actor_role or normalize_admin_role(getattr(await self.session.get(User, admin_id), "role", None))
+        conditions = [
+            VerificationRequest.id == request_id,
+            VerificationRequest.status == VerificationDecision.PENDING,
+            VerificationRequest.assigned_to.is_not(None),
+        ]
+        if not can_override_case(role):
+            conditions.append(VerificationRequest.assigned_to == admin_id)
+        result = await self.session.execute(
+            update(VerificationRequest)
+            .where(*conditions)
+            .values(assigned_to=None, assigned_at=None)
+            .returning(VerificationRequest)
+        )
+        request = result.scalar_one_or_none()
+        if request is not None:
+            await self.session.flush()
+            return request, True
+        return await self.repo.verification(request_id), False

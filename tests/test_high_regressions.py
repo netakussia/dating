@@ -41,6 +41,19 @@ class FakeBot:
         self.sent.append((chat_id, text, kwargs))
 
 
+class BrokenRedis:
+    async def exists(self, _key):
+        raise RuntimeError("redis unavailable")
+
+    async def set(self, *_args, **_kwargs):
+        raise RuntimeError("redis unavailable")
+
+
+class CleanupBrokenRedis(FakeRedis):
+    async def delete(self, _key):
+        raise RuntimeError("redis unavailable")
+
+
 class FakeMessage:
     def __init__(self):
         self.sent = []
@@ -127,4 +140,20 @@ async def test_redis_notification_concurrent_duplicates_send_once():
     )
 
     assert results.count(True) == 1
+    assert len(bot.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_redis_dedupe_failure_does_not_abort_notification():
+    bot = FakeBot(BrokenRedis())
+
+    assert await NotificationService(bot).safe_send(42, "event", dedupe_key="outage") is True
+    assert len(bot.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_notification_survives_redis_cleanup_failure():
+    bot = FakeBot(CleanupBrokenRedis())
+
+    assert await NotificationService(bot).safe_send(42, "event", dedupe_key="cleanup") is True
     assert len(bot.sent) == 1
