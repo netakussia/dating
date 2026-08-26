@@ -51,6 +51,11 @@ class SafeProvider:
         return PhotoAssessment(nsfw_score=0.0, face_detected=True, provider="test")
 
 
+class NoFaceProvider:
+    async def assess(self, _photo_id):
+        return PhotoAssessment(nsfw_score=0.0, face_detected=False, provider="test")
+
+
 class FailingProvider:
     async def assess(self, _photo_id):
         raise RuntimeError("model unavailable")
@@ -295,6 +300,26 @@ async def test_nsfw_and_no_face_open_manual_review_case():
     assert profile.moderation_status == ModerationStatus.UNDER_REVIEW
     assert not profile.is_visible and profile.moderation_locked
     assert any(getattr(item, "case_type", None) == ModerationCaseType.NSFW for item in session.added)
+
+
+@pytest.mark.asyncio
+async def test_no_face_review_can_be_deferred_without_hiding_profile():
+    profile = SimpleNamespace(
+        moderation_status=ModerationStatus.CLEAR,
+        is_visible=True,
+        moderation_locked=False,
+    )
+    session = FakeSession(profile=profile)
+    session.scalar_values = [profile]
+
+    assessment = await PhotoModerationService(
+        session, nsfw_threshold=0.85, provider=NoFaceProvider()
+    ).inspect(7, "photo", defer_no_face_review=True)
+
+    assert not assessment.face_detected
+    assert profile.moderation_status == ModerationStatus.CLEAR
+    assert profile.is_visible and not profile.moderation_locked
+    assert not any(getattr(item, "case_type", None) == ModerationCaseType.NO_FACE for item in session.added)
 
 
 def test_new_profile_defaults_are_unverified():

@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from keyboards.profile import failed_photo_keyboard
 from services.photo_analysis_progress import (
     PHOTO_ANALYSIS_TEXT,
     dismiss_photo_analysis_progress,
@@ -20,3 +21,13 @@ async def test_photo_analysis_progress_is_shown_and_removed():
 
     message.answer.assert_awaited_once_with(PHOTO_ANALYSIS_TEXT)
     progress.delete.assert_awaited_once()
+
+
+def test_failed_photo_keyboard_offers_replace_or_manual_review():
+    callback_data = {
+        button.callback_data
+        for row in failed_photo_keyboard().inline_keyboard
+        for button in row
+    }
+
+    assert callback_data == {"photo:retry_failed", "photo:review_failed"}

@@ -14,7 +14,7 @@ from services.notification_service import InternalNotificationService
 from states.bug_report import BugReportState
 from utils.admin_ui import admin_role_label
 from utils.document_links import documents_keyboard
-from utils.legal import accept_consent, ensure_consent_for_new_user
+from utils.legal import LEGAL_NOTICE_TEXT, accept_consent, consent_already_given, ensure_consent_for_new_user
 from utils.text import escape_html
 
 ALPHA_NOTICE_TEXT = (
@@ -24,6 +24,16 @@ ALPHA_NOTICE_TEXT = (
 )
 
 router = Router()
+
+
+async def _send_welcome(message: Message) -> None:
+    await send_and_pin_alpha_notice(message)
+    await message.answer(
+        "👋 Добро пожаловать в MeAnima!\n\n"
+        "Заполните анкету в «👤 Моя анкета», чтобы найти близких по духу людей, "
+        "или перейдите в «💘 Знакомства» для просмотра профилей.",
+        reply_markup=main_menu(),
+    )
 
 
 async def send_and_pin_alpha_notice(message: Message) -> None:
@@ -38,13 +48,16 @@ async def send_and_pin_alpha_notice(message: Message) -> None:
 @router.callback_query(F.data == "legal:accept")
 async def legal_accept(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     await accept_consent(callback, state)
-    await send_and_pin_alpha_notice(callback.message)
-    await callback.message.answer(
-        "👋 Добро пожаловать в MeAnima!\n\n"
-        "Заполните анкету в «👤 Моя анкета», чтобы найти близких по духу людей, "
-        "или перейдите в «💘 Знакомства» для просмотра профилей.",
-        reply_markup=main_menu(),
-    )
+    await _send_welcome(callback.message)
+
+
+async def _text_start(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
+    await start(message, state, session, settings)
+
+
+@router.message(F.text.casefold() == "start")
+async def text_start(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
+    await _text_start(message, state, session, settings)
 
 
 @router.message(CommandStart())
@@ -68,13 +81,26 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, sett
     if consent:
         await state.update_data(legal_consent=True)
 
-    await send_and_pin_alpha_notice(message)
-    await message.answer(
-        "👋 Добро пожаловать в MeAnima!\n\n"
-        "Заполните анкету в «👤 Моя анкета», чтобы найти близких по духу людей, "
-        "или перейдите в «💘 Знакомства» для просмотра профилей.",
-        reply_markup=main_menu(),
-    )
+    await _send_welcome(message)
+
+
+@router.message(F.text.in_({"Продолжить", "✅ Продолжить"}))
+async def text_continue(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await consent_already_given(state):
+        await message.answer(
+            LEGAL_NOTICE_TEXT,
+            reply_markup=documents_keyboard(
+                "terms",
+                "privacy",
+                "community",
+                "safety",
+                "moderation",
+                "alpha",
+                include_continue=True,
+            ),
+        )
+        return
+    await _send_welcome(message)
 
 
 @router.callback_query(F.data == "bug_report:start")

@@ -43,6 +43,14 @@ def photo_upload_keyboard(done_callback: str):
     return kb.as_markup()
 
 
+def failed_photo_keyboard():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Заменить фото", callback_data="photo:retry_failed")
+    kb.button(text="🛡 Отправить модераторам", callback_data="photo:review_failed")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
 def registration_preview_keyboard():
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Опубликовать", callback_data="profile:publish")

@@ -8,6 +8,10 @@ from contextlib import asynccontextmanager
 _local_locks: dict[int, asyncio.Lock] = {}
 
 
+class PhotoUploadBusyError(RuntimeError):
+    pass
+
+
 @asynccontextmanager
 async def photo_upload_lock(bot, user_id: int) -> AsyncIterator[None]:
     """Serialize photo updates across workers when the shared Redis client is available."""
@@ -28,7 +32,7 @@ async def photo_upload_lock(bot, user_id: int) -> AsyncIterator[None]:
                 break
             await asyncio.sleep(0.05)
         if not acquired:
-            raise RuntimeError("Photo upload is busy; please retry")
+            raise PhotoUploadBusyError("Photo upload is busy; please retry")
         yield
     finally:
         if acquired:

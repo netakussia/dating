@@ -6,12 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from handlers.registration import start_registration
 from keyboards.menu import main_menu
-from keyboards.profile import photo_management_keyboard, photo_upload_keyboard, profile_keyboard
+from keyboards.profile import failed_photo_keyboard, photo_management_keyboard, photo_upload_keyboard, profile_keyboard
 from models import ModerationStatus, User, UserStatus
 from services.interest_normalizer import format_interests
 from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
-from services.photo_upload_lock import photo_upload_lock
+from services.photo_upload_lock import PhotoUploadBusyError, photo_upload_lock
 from services.profile_service import ProfileService
 from states.profile_photo import ProfilePhotoState
 from utils.document_links import documents_keyboard
@@ -318,56 +318,129 @@ async def request_replace_photo(callback: CallbackQuery, state: FSMContext) -> N
 
 @router.message(ProfilePhotoState.waiting_photo, F.photo)
 async def save_changed_photo(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
-    async with photo_upload_lock(message.bot, message.from_user.id):
-        data = await state.get_data()
-        profile_service = ProfileService(session)
-        profile = await profile_service.get_profile(message.from_user.id)
-        if profile is None:
-            await state.clear()
-            return
-        photo_id = message.photo[-1].file_id
-        progress = await show_photo_analysis_progress(message)
-        try:
-            if data.get("photo_action") == "replace":
-                old_id = _photo_at(profile, str(data.get("photo_index")))
-                if old_id is None:
-                    await message.answer("Список фото изменился. Откройте управление снова.")
-                    await dismiss_photo_analysis_progress(progress)
-                    await state.clear()
-                    return
-                await profile_service.replace_photo(message.from_user.id, old_id, photo_id)
-            else:
-                await profile_service.add_photo(message.from_user.id, photo_id)
-            assessment = await PhotoModerationService(
-                session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
-            ).inspect(message.from_user.id, photo_id)
-        except ValueError as error:
-            await dismiss_photo_analysis_progress(progress)
-            await message.answer(str(error))
-        except PhotoModerationError:
-            await dismiss_photo_analysis_progress(progress)
-            await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
-        else:
-            await dismiss_photo_analysis_progress(progress)
-            if assessment.nsfw_score >= settings.nsfw_threshold or not assessment.face_detected:
+    try:
+        async with photo_upload_lock(message.bot, message.from_user.id):
+            data = await state.get_data()
+            profile_service = ProfileService(session)
+            profile = await profile_service.get_profile(message.from_user.id)
+            if profile is None:
                 await state.clear()
-                await message.answer(
-                    "⚠️ Фото не прошло автоматическую проверку и отправлено модераторам. "
-                    "До решения анкета скрыта."
-                )
                 return
-            updated_profile = await profile_service.get_profile(message.from_user.id)
-            if data.get("photo_action") == "add" and updated_profile and len(updated_profile.photo_file_ids) < 3:
+            photo_id = message.photo[-1].file_id
+            progress = await show_photo_analysis_progress(message)
+            try:
+                old_photo_id = None
+                if data.get("photo_action") == "replace":
+                    old_id = _photo_at(profile, str(data.get("photo_index")))
+                    if old_id is None:
+                        await dismiss_photo_analysis_progress(progress)
+                        await message.answer("Список фото изменился. Откройте управление снова.")
+                        await state.clear()
+                        return
+                    old_photo_id = old_id
+                    await profile_service.replace_photo(message.from_user.id, old_id, photo_id)
+                else:
+                    await profile_service.add_photo(message.from_user.id, photo_id)
+                assessment = await PhotoModerationService(
+                    session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
+                ).inspect(message.from_user.id, photo_id, defer_no_face_review=True)
+            except ValueError as error:
+                await dismiss_photo_analysis_progress(progress)
+                await message.answer(str(error))
+            except PhotoModerationError:
+                await dismiss_photo_analysis_progress(progress)
+                await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
+            else:
+                await dismiss_photo_analysis_progress(progress)
+                if assessment.nsfw_score >= settings.nsfw_threshold:
+                    await state.clear()
+                    await message.answer(
+                        "⚠️ Фото не прошло автоматическую проверку и отправлено модераторам. "
+                        "До решения анкета скрыта."
+                    )
+                    return
+                if not assessment.face_detected:
+                    if old_photo_id is None:
+                        await profile_service.remove_photo(message.from_user.id, photo_id)
+                    else:
+                        await profile_service.replace_photo(message.from_user.id, photo_id, old_photo_id)
+                    await state.update_data(
+                        failed_photo_id=photo_id,
+                        failed_photo_action=data.get("photo_action"),
+                        failed_original_id=old_photo_id,
+                    )
+                    await state.set_state(ProfilePhotoState.awaiting_manual_review)
+                    await message.answer(
+                        "⚠️ На фото не удалось уверенно найти лицо. Анкета остаётся без изменений. "
+                        "Замените фото или отправьте именно его на ручную проверку.",
+                        reply_markup=failed_photo_keyboard(),
+                    )
+                    return
+                updated_profile = await profile_service.get_profile(message.from_user.id)
+                if data.get("photo_action") == "add" and updated_profile and len(updated_profile.photo_file_ids) < 3:
+                    await message.answer(
+                        f"✅ Фото сохранено. Загружено {len(updated_profile.photo_file_ids)}/3.",
+                        reply_markup=photo_upload_keyboard("photo:done"),
+                    )
+                    return
                 await message.answer(
-                    f"✅ Фото сохранено. Загружено {len(updated_profile.photo_file_ids)}/3.",
-                    reply_markup=photo_upload_keyboard("photo:done"),
+                    "✅ Фотография сохранена.",
+                    reply_markup=(
+                        photo_management_keyboard(len(updated_profile.photo_file_ids)) if updated_profile else None
+                    ),
                 )
-                return
-            await message.answer(
-                "✅ Фотография сохранена.",
-                reply_markup=photo_management_keyboard(len(updated_profile.photo_file_ids)) if updated_profile else None
-            )
+                await state.clear()
+    except PhotoUploadBusyError:
+        await message.answer("⏳ Фото ещё обрабатываются. Попробуйте отправить фото ещё раз через секунду.")
+
+
+@router.callback_query(ProfilePhotoState.awaiting_manual_review, F.data == "photo:retry_failed")
+async def retry_failed_photo(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ProfilePhotoState.waiting_photo)
+    await callback.message.answer("📸 Отправьте другую фотографию.")
+    await callback.answer()
+
+
+@router.callback_query(ProfilePhotoState.awaiting_manual_review, F.data == "photo:review_failed")
+async def review_failed_photo(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, settings
+) -> None:
+    data = await state.get_data()
+    photo_id = data.get("failed_photo_id")
+    action = data.get("failed_photo_action")
+    original_id = data.get("failed_original_id")
+    profile_service = ProfileService(session)
+    profile = await profile_service.get_profile(callback.from_user.id)
+    if not photo_id or action not in {"add", "replace"} or profile is None:
         await state.clear()
+        await callback.answer("Фото уже нельзя отправить на проверку. Загрузите его заново.", show_alert=True)
+        return
+    try:
+        if action == "add":
+            await profile_service.add_photo(callback.from_user.id, photo_id)
+        elif not original_id:
+            raise ValueError("Исходная фотография недоступна")
+        else:
+            await profile_service.replace_photo(callback.from_user.id, original_id, photo_id)
+        assessment = await PhotoModerationService(
+            session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=callback.bot
+        ).inspect(callback.from_user.id, photo_id)
+    except PhotoModerationError:
+        await state.clear()
+        await callback.message.answer("⚠️ Фото отправлено модераторам. До решения анкета скрыта.")
+        await callback.answer()
+        return
+    except ValueError:
+        await state.clear()
+        await callback.message.answer("⚠️ Не удалось отправить это фото. Загрузите его ещё раз.")
+        await callback.answer()
+        return
+    await state.clear()
+    if assessment.nsfw_score >= settings.nsfw_threshold or not assessment.face_detected:
+        await callback.message.answer("⚠️ Фото отправлено модераторам. До решения анкета скрыта.")
+    else:
+        await callback.message.answer("✅ Повторная проверка прошла успешно. Фото сохранено.")
+    await callback.answer()
 
 
 @router.message(ProfilePhotoState.waiting_photo)

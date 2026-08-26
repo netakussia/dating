@@ -90,7 +90,9 @@ class PhotoModerationService:
         self.bot = bot
         self.repo = TrustRepository(session)
 
-    async def inspect(self, user_id: int, photo_file_id: str) -> PhotoAssessment:
+    async def inspect(
+        self, user_id: int, photo_file_id: str, *, defer_no_face_review: bool = False
+    ) -> PhotoAssessment:
         content_hash: str | None = None
         image: SafeImage | None = None
         try:
@@ -103,7 +105,9 @@ class PhotoModerationService:
                 cached = await self.repo.photo_by_hash(content_hash)
                 if cached is not None:
                     assessment = PhotoAssessment(cached.nsfw_score, cached.face_detected, f"{cached.provider}:cached")
-                    await self._apply_assessment(user_id, photo_file_id, content_hash, assessment)
+                    await self._apply_assessment(
+                        user_id, photo_file_id, content_hash, assessment, defer_no_face_review=defer_no_face_review
+                    )
                     return assessment
             assessment = await self.provider.assess(image)
             if not 0.0 <= assessment.nsfw_score <= 1.0:
@@ -112,17 +116,27 @@ class PhotoModerationService:
             logger.warning("Photo safety check failed for user %s: %s", user_id, type(error).__name__)
             await self._send_to_manual_review(user_id, photo_file_id, content_hash, type(error).__name__)
             raise PhotoModerationError("Photo safety check failed") from error
-        await self._apply_assessment(user_id, photo_file_id, content_hash, assessment)
+        await self._apply_assessment(
+            user_id, photo_file_id, content_hash, assessment, defer_no_face_review=defer_no_face_review
+        )
         return assessment
 
     async def _apply_assessment(
-        self, user_id: int, photo_file_id: str, content_hash: str | None, assessment: PhotoAssessment
+        self,
+        user_id: int,
+        photo_file_id: str,
+        content_hash: str | None,
+        assessment: PhotoAssessment,
+        *,
+        defer_no_face_review: bool = False,
     ) -> None:
         await self.repo.record_photo(
             user_id, photo_file_id, assessment.provider, assessment.nsfw_score, assessment.face_detected, content_hash
         )
         profile = await self.session.scalar(select(Profile).where(Profile.user_id == user_id))
         is_nsfw = assessment.nsfw_score >= self.threshold
+        if not is_nsfw and not assessment.face_detected and defer_no_face_review:
+            return
         if is_nsfw or not assessment.face_detected:
             if profile:
                 profile.moderation_status = ModerationStatus.UNDER_REVIEW

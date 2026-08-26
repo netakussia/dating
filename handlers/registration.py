@@ -17,7 +17,7 @@ from services.interest_normalizer import format_interests
 from services.localization import LocalizationService
 from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
-from services.photo_upload_lock import photo_upload_lock
+from services.photo_upload_lock import PhotoUploadBusyError, photo_upload_lock
 from services.profile_service import ProfileService
 from states.registration import RegistrationState
 from utils.document_links import documents_keyboard
@@ -352,27 +352,32 @@ async def bio(message: Message, state: FSMContext) -> None:
 
 @router.message(RegistrationState.photo, F.photo)
 async def photo(message: Message, state: FSMContext) -> None:
-    async with photo_upload_lock(message.bot, message.from_user.id):
-        draft = await _get_draft(state)
-        photos = list(draft.get("photo_file_ids") or [])
-        file_id = message.photo[-1].file_id
-        replacing_photos = bool(
-            draft.get("edit_mode") and draft.get("photo_file_ids") and not draft.get("photo_replacement_started")
-        )
-        if replacing_photos:
-            photos = [file_id]
-            await _set_draft(state, photo_replacement_started=True)
-        elif file_id not in photos:
-            photos.append(file_id)
-        photos = photos[:3]
-        await _set_draft(state, photo_file_ids=photos, main_photo_file_id=photos[0] if photos else None)
-        if len(photos) < 3:
-            await message.answer(
-                f"📸 Загружено {len(photos)}/3 фото. Можно добавить ещё или нажать «Готово».",
-                reply_markup=photo_upload_keyboard("registration:photos_done"),
+    try:
+        async with photo_upload_lock(message.bot, message.from_user.id):
+            draft = await _get_draft(state)
+            photos = list(draft.get("photo_file_ids") or [])
+            file_id = message.photo[-1].file_id
+            replacing_photos = bool(
+                draft.get("edit_mode")
+                and draft.get("photo_file_ids")
+                and not draft.get("photo_replacement_started")
             )
-            return
-        await _show_step(message, state, "preview")
+            if replacing_photos:
+                photos = [file_id]
+                await _set_draft(state, photo_replacement_started=True)
+            elif file_id not in photos:
+                photos.append(file_id)
+            photos = photos[:3]
+            await _set_draft(state, photo_file_ids=photos, main_photo_file_id=photos[0] if photos else None)
+            if len(photos) < 3:
+                await message.answer(
+                    f"📸 Загружено {len(photos)}/3 фото. Можно добавить ещё или нажать «Готово».",
+                    reply_markup=photo_upload_keyboard("registration:photos_done"),
+                )
+                return
+            await _show_step(message, state, "preview")
+    except PhotoUploadBusyError:
+        await message.answer("⏳ Фото ещё обрабатываются. Попробуйте отправить фото ещё раз через секунду.")
 
 
 @router.callback_query(RegistrationState.photo, F.data == "registration:photos_done")
