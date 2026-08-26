@@ -37,6 +37,12 @@ def photo_management_keyboard(photo_count: int):
     return kb.as_markup()
 
 
+def photo_upload_keyboard(done_callback: str):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Готово", callback_data=done_callback)
+    return kb.as_markup()
+
+
 def registration_preview_keyboard():
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Опубликовать", callback_data="profile:publish")

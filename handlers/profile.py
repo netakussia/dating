@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from handlers.registration import start_registration
 from keyboards.menu import main_menu
-from keyboards.profile import photo_management_keyboard, profile_keyboard
+from keyboards.profile import photo_management_keyboard, photo_upload_keyboard, profile_keyboard
 from models import ModerationStatus, User, UserStatus
 from services.interest_normalizer import format_interests
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
+from services.photo_upload_lock import photo_upload_lock
 from services.profile_service import ProfileService
 from states.profile_photo import ProfilePhotoState
 from utils.document_links import documents_keyboard
@@ -316,37 +317,44 @@ async def request_replace_photo(callback: CallbackQuery, state: FSMContext) -> N
 
 @router.message(ProfilePhotoState.waiting_photo, F.photo)
 async def save_changed_photo(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
-    data = await state.get_data()
-    profile_service = ProfileService(session)
-    profile = await profile_service.get_profile(message.from_user.id)
-    if profile is None:
-        await state.clear()
-        return
-    photo_id = message.photo[-1].file_id
-    try:
-        if data.get("photo_action") == "replace":
-            old_id = _photo_at(profile, str(data.get("photo_index")))
-            if old_id is None:
-                await message.answer("Список фото изменился. Откройте управление снова.")
-                await state.clear()
-                return
-            await profile_service.replace_photo(message.from_user.id, old_id, photo_id)
+    async with photo_upload_lock(message.bot, message.from_user.id):
+        data = await state.get_data()
+        profile_service = ProfileService(session)
+        profile = await profile_service.get_profile(message.from_user.id)
+        if profile is None:
+            await state.clear()
+            return
+        photo_id = message.photo[-1].file_id
+        try:
+            if data.get("photo_action") == "replace":
+                old_id = _photo_at(profile, str(data.get("photo_index")))
+                if old_id is None:
+                    await message.answer("Список фото изменился. Откройте управление снова.")
+                    await state.clear()
+                    return
+                await profile_service.replace_photo(message.from_user.id, old_id, photo_id)
+            else:
+                await profile_service.add_photo(message.from_user.id, photo_id)
+            await PhotoModerationService(
+                session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
+            ).inspect(message.from_user.id, photo_id)
+        except ValueError as error:
+            await message.answer(str(error))
+        except PhotoModerationError:
+            await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
         else:
-            await profile_service.add_photo(message.from_user.id, photo_id)
-        await PhotoModerationService(
-            session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
-        ).inspect(message.from_user.id, photo_id)
-    except ValueError as error:
-        await message.answer(str(error))
-    except PhotoModerationError:
-        await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
-    else:
-        updated_profile = await profile_service.get_profile(message.from_user.id)
-        await message.answer(
-            "✅ Фотография сохранена.",
-            reply_markup=photo_management_keyboard(len(updated_profile.photo_file_ids)) if updated_profile else None
-        )
-    await state.clear()
+            updated_profile = await profile_service.get_profile(message.from_user.id)
+            if data.get("photo_action") == "add" and updated_profile and len(updated_profile.photo_file_ids) < 3:
+                await message.answer(
+                    f"✅ Фото сохранено. Загружено {len(updated_profile.photo_file_ids)}/3.",
+                    reply_markup=photo_upload_keyboard("photo:done"),
+                )
+                return
+            await message.answer(
+                "✅ Фотография сохранена.",
+                reply_markup=photo_management_keyboard(len(updated_profile.photo_file_ids)) if updated_profile else None
+            )
+        await state.clear()
 
 
 @router.message(ProfilePhotoState.waiting_photo)
@@ -355,7 +363,8 @@ async def changed_photo_not_photo(message: Message) -> None:
 
 
 @router.callback_query(F.data == "photo:done")
-async def finish_photo_management(callback: CallbackQuery, session: AsyncSession) -> None:
+async def finish_photo_management(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
     profile = await ProfileService(session).get_profile(callback.from_user.id)
     if profile is None:
         await callback.message.answer("Главное меню", reply_markup=main_menu())

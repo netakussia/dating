@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dtos.profile_dto import ProfileDraft
 from keyboards.dating import choice_keyboard
 from keyboards.menu import main_menu
-from keyboards.profile import registration_preview_keyboard
+from keyboards.profile import photo_upload_keyboard, registration_preview_keyboard
 from services.interest_normalizer import format_interests
 from services.localization import LocalizationService
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
+from services.photo_upload_lock import photo_upload_lock
 from services.profile_service import ProfileService
 from states.registration import RegistrationState
 from utils.document_links import documents_keyboard
@@ -350,24 +351,37 @@ async def bio(message: Message, state: FSMContext) -> None:
 
 @router.message(RegistrationState.photo, F.photo)
 async def photo(message: Message, state: FSMContext) -> None:
-    draft = await _get_draft(state)
-    photos = list(draft.get("photo_file_ids") or [])
-    file_id = message.photo[-1].file_id
-    replacing_photos = bool(
-        draft.get("edit_mode") and draft.get("photo_file_ids") and not draft.get("photo_replacement_started")
-    )
-    if replacing_photos:
-        photos = [file_id]
-        await _set_draft(state, photo_replacement_started=True)
-    elif file_id not in photos:
-        photos.append(file_id)
-    if len(photos) > 3:
-        photos = photos[:3]
-        await message.answer(
-            "⚠️ Можно загрузить не более 3 фотографий. Сохранены первые три."
+    async with photo_upload_lock(message.bot, message.from_user.id):
+        draft = await _get_draft(state)
+        photos = list(draft.get("photo_file_ids") or [])
+        file_id = message.photo[-1].file_id
+        replacing_photos = bool(
+            draft.get("edit_mode") and draft.get("photo_file_ids") and not draft.get("photo_replacement_started")
         )
-    await _set_draft(state, photo_file_ids=photos, main_photo_file_id=photos[0] if photos else None)
-    await _show_step(message, state, "preview")
+        if replacing_photos:
+            photos = [file_id]
+            await _set_draft(state, photo_replacement_started=True)
+        elif file_id not in photos:
+            photos.append(file_id)
+        photos = photos[:3]
+        await _set_draft(state, photo_file_ids=photos, main_photo_file_id=photos[0] if photos else None)
+        if len(photos) < 3:
+            await message.answer(
+                f"📸 Загружено {len(photos)}/3 фото. Можно добавить ещё или нажать «Готово».",
+                reply_markup=photo_upload_keyboard("registration:photos_done"),
+            )
+            return
+        await _show_step(message, state, "preview")
+
+
+@router.callback_query(RegistrationState.photo, F.data == "registration:photos_done")
+async def photos_done(callback: CallbackQuery, state: FSMContext) -> None:
+    draft = await _get_draft(state)
+    if not draft.get("photo_file_ids"):
+        await callback.answer("Загрузите хотя бы одну фотографию.", show_alert=True)
+        return
+    await _show_step(callback, state, "preview")
+    await callback.answer()
 
 
 @router.message(RegistrationState.photo)

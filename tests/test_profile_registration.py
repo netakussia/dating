@@ -103,6 +103,9 @@ def managed_profile(photo_ids):
             "photo_file_id": photo_ids[0] if photo_ids else "",
             "main_photo_file_id": photo_ids[0] if photo_ids else None,
             "extra_data": {"photo_file_ids": list(photo_ids)},
+            "moderation_locked": False,
+            "moderation_status": None,
+            "is_visible": True,
         },
     )()
 
@@ -129,3 +132,17 @@ async def test_add_photo_rejects_stale_fourth_upload():
         await service.add_photo(1, "four")
 
     assert profile.photo_file_ids == ["one", "two", "three"]
+
+
+@pytest.mark.asyncio
+async def test_add_photo_accumulates_up_to_three_ids():
+    profile = managed_profile([])
+    service = ProfileService(None)
+    service.repo = FakeProfileRepository(profile)
+
+    await service.add_photo(1, "one")
+    await service.add_photo(1, "two")
+    await service.add_photo(1, "three")
+
+    assert profile.photo_file_ids == ["one", "two", "three"]
+    assert profile.extra_data["photo_file_ids"] == ["one", "two", "three"]
