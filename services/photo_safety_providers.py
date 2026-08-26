@@ -46,15 +46,32 @@ class DisabledPhotoSafetyProvider:
         return PhotoAssessment(nsfw_score=0.0, face_detected=True, provider=self.name)
 
 
+def face_detection_size(width: int, height: int, max_dimension: int) -> tuple[int, int]:
+    """Fit a camera image into YuNet's working size without distorting it."""
+    largest_dimension = max(width, height)
+    if largest_dimension <= max_dimension:
+        return width, height
+    scale = max_dimension / largest_dimension
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
 class OnnxPhotoSafetyProvider:
     """Local CPU inference: OpenNSFW-compatible ONNX + OpenCV YuNet, no cloud calls."""
 
     name = "ml_onnx"
 
-    def __init__(self, *, nsfw_model_path: str, face_model_path: str, face_threshold: float) -> None:
+    def __init__(
+        self,
+        *,
+        nsfw_model_path: str,
+        face_model_path: str,
+        face_threshold: float,
+        face_max_dimension: int,
+    ) -> None:
         self.nsfw_model_path = Path(nsfw_model_path)
         self.face_model_path = Path(face_model_path)
         self.face_threshold = face_threshold
+        self.face_max_dimension = face_max_dimension
         self._nsfw_session = None
 
     async def assess(self, image: SafeImage | None) -> PhotoAssessment:
@@ -75,10 +92,14 @@ class OnnxPhotoSafetyProvider:
         decoded = cv2.imdecode(np.frombuffer(image.rgb_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
         if decoded is None:
             raise ValueError("Normalized image cannot be decoded")
+        face_width, face_height = face_detection_size(image.width, image.height, self.face_max_dimension)
+        face_image = decoded
+        if (face_width, face_height) != (image.width, image.height):
+            face_image = cv2.resize(decoded, (face_width, face_height), interpolation=cv2.INTER_AREA)
         detector = cv2.FaceDetectorYN.create(
-            str(self.face_model_path), "", (image.width, image.height), self.face_threshold, 0.3, 5000
+            str(self.face_model_path), "", (face_width, face_height), self.face_threshold, 0.3, 5000
         )
-        _, faces = detector.detect(decoded)
+        _, faces = detector.detect(face_image)
 
         if self._nsfw_session is None:
             self._nsfw_session = ort.InferenceSession(str(self.nsfw_model_path), providers=["CPUExecutionProvider"])
@@ -101,7 +122,7 @@ class OnnxPhotoSafetyProvider:
         return PhotoAssessment(nsfw_score=score, face_detected=faces is not None and len(faces) > 0, provider=self.name)
 
 
-_PROVIDER_CACHE: dict[tuple[str, str, str, float], PhotoSafetyProvider] = {}
+_PROVIDER_CACHE: dict[tuple[str, str, str, float, int], PhotoSafetyProvider] = {}
 
 
 def build_photo_safety_provider(settings) -> PhotoSafetyProvider:
@@ -114,6 +135,7 @@ def build_photo_safety_provider(settings) -> PhotoSafetyProvider:
             nsfw_model_path=settings.nsfw_model_path,
             face_model_path=settings.face_model_path,
             face_threshold=settings.face_detection_threshold,
+            face_max_dimension=settings.face_detection_max_dimension,
         )
     raise PhotoSafetyConfigurationError(f"Unknown photo safety provider: {settings.photo_safety_provider}")
 
@@ -125,6 +147,7 @@ def get_photo_safety_provider(settings) -> PhotoSafetyProvider:
         settings.nsfw_model_path,
         settings.face_model_path,
         settings.face_detection_threshold,
+        settings.face_detection_max_dimension,
     )
     if key not in _PROVIDER_CACHE:
         _PROVIDER_CACHE[key] = build_photo_safety_provider(settings)

@@ -338,7 +338,7 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
                 await profile_service.replace_photo(message.from_user.id, old_id, photo_id)
             else:
                 await profile_service.add_photo(message.from_user.id, photo_id)
-            await PhotoModerationService(
+            assessment = await PhotoModerationService(
                 session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=message.bot
             ).inspect(message.from_user.id, photo_id)
         except ValueError as error:
@@ -349,6 +349,13 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
             await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
         else:
             await dismiss_photo_analysis_progress(progress)
+            if assessment.nsfw_score >= settings.nsfw_threshold or not assessment.face_detected:
+                await state.clear()
+                await message.answer(
+                    "⚠️ Фото не прошло автоматическую проверку и отправлено модераторам. "
+                    "До решения анкета скрыта."
+                )
+                return
             updated_profile = await profile_service.get_profile(message.from_user.id)
             if data.get("photo_action") == "add" and updated_profile and len(updated_profile.photo_file_ids) < 3:
                 await message.answer(

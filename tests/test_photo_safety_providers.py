@@ -16,6 +16,7 @@ from services.photo_safety_providers import (
     HeuristicPhotoSafetyProvider,
     OnnxPhotoSafetyProvider,
     build_photo_safety_provider,
+    face_detection_size,
 )
 
 
@@ -25,6 +26,7 @@ def safety_settings(**changes):
         "nsfw_model_path": "/missing/nsfw.onnx",
         "face_model_path": "/missing/face.onnx",
         "face_detection_threshold": 0.75,
+        "face_detection_max_dimension": 960,
         "photo_safety_min_dimension": 64,
         "photo_safety_max_pixels": 1_000_000,
     }
@@ -61,6 +63,11 @@ def test_provider_is_selected_only_by_configuration():
         build_photo_safety_provider(safety_settings(photo_safety_provider="disabled")), DisabledPhotoSafetyProvider
     )
     assert isinstance(build_photo_safety_provider(safety_settings(photo_safety_provider="ml")), OnnxPhotoSafetyProvider)
+
+
+def test_face_detection_size_downscales_phone_photos_without_distortion():
+    assert face_detection_size(3888, 5184, 960) == (720, 960)
+    assert face_detection_size(709, 945, 960) == (709, 945)
 
 
 def test_normalization_strips_metadata_and_produces_stable_image():

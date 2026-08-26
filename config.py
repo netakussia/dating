@@ -57,8 +57,9 @@ class Settings(BaseSettings):
     face_model_path: str = "/models/face_detection_yunet_2023mar.onnx"
     face_detection_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     photo_safety_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
-    photo_safety_max_pixels: int = Field(default=20_000_000, ge=1)
+    photo_safety_max_pixels: int = Field(default=24_000_000, ge=1)
     photo_safety_min_dimension: int = Field(default=64, ge=1)
+    face_detection_max_dimension: int = Field(default=960, ge=320, le=2048)
     matching_weights_raw: str = Field(default="", alias="MATCHING_WEIGHTS_JSON")
     report_threshold: int = Field(default=3, ge=1, alias="REPORT_THRESHOLD")
     confession_daily_limit: int = Field(default=20, ge=1, le=100, alias="CONFESSION_DAILY_LIMIT")
