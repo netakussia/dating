@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     daily_secret_salt: str = Field(..., min_length=16)
     admin_ids_raw: str = Field(default="", alias="ADMIN_IDS")
+    owner_admin_id_raw: str = Field(default="", alias="OWNER_ADMIN_ID")
     document_base_url: str = Field(default="https://example.com/me-anima/docs", alias="DOCUMENT_BASE_URL")
     log_level: str = "INFO"
     nsfw_threshold: float = 0.85
@@ -92,6 +93,21 @@ class Settings(BaseSettings):
             return {int(item) for item in values}
         except ValueError as error:
             raise ValueError("ADMIN_IDS должен содержать только числовые Telegram ID через запятую.") from error
+
+    @property
+    def owner_admin_id(self) -> int | None:
+        """Return the explicitly configured owner, or retain the legacy first-admin fallback."""
+        if not self.admin_ids:
+            return None
+        if not self.owner_admin_id_raw.strip():
+            return min(self.admin_ids)
+        try:
+            owner_id = int(self.owner_admin_id_raw.strip())
+        except ValueError as error:
+            raise ValueError("OWNER_ADMIN_ID должен содержать числовой Telegram ID.") from error
+        if owner_id not in self.admin_ids:
+            raise ValueError("OWNER_ADMIN_ID должен быть указан также в ADMIN_IDS.")
+        return owner_id
 
     @property
     def document_urls(self) -> dict[str, str]:

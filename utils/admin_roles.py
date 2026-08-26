@@ -19,10 +19,11 @@ def resolve_admin_role(
     admin_ids: set[int] | None = None,
     user_role: UserRole | None = None,
 ) -> UserRole:
-    if user_role is not None:
-        return normalize_admin_role(user_role)
     if owner_admin_id is not None and user_id == owner_admin_id:
         return UserRole.OWNER
+    stored_role = normalize_admin_role(user_role)
+    if stored_role != UserRole.USER:
+        return stored_role
     if admin_ids and user_id in admin_ids:
         return UserRole.MODERATOR
     return UserRole.USER

@@ -83,8 +83,12 @@ def allowed(user_id: int, settings: Settings) -> bool:
 
 
 def admin_role_for_user(user_id: int, settings: Settings, *, user_role: UserRole | None = None) -> UserRole:
-    owner_id = next(iter(sorted(settings.admin_ids)), None) if settings.admin_ids else None
-    return resolve_admin_role(user_id, owner_admin_id=owner_id, admin_ids=settings.admin_ids, user_role=user_role)
+    return resolve_admin_role(
+        user_id,
+        owner_admin_id=settings.owner_admin_id,
+        admin_ids=settings.admin_ids,
+        user_role=user_role,
+    )
 
 
 async def _safe_edit_message_text(message: Message, text: str, *, reply_markup=None) -> None:

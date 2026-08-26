@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, Message
 
@@ -13,7 +13,7 @@ async def outdated_callback(callback: CallbackQuery) -> None:
     await callback.answer("Эта кнопка устарела. Откройте актуальный раздел меню.", show_alert=True)
 
 
-@router.message(StateFilter(None))
+@router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def no_state_message(message: Message) -> None:
     await message.answer(
         "Я не нашёл активного действия для этого сообщения. Откройте нужный раздел меню.",

@@ -48,10 +48,24 @@ def test_user_display_name_hides_the_full_telegram_id():
 def test_admin_permission_hierarchy_is_explicit_and_safe():
     assert resolve_admin_role(100, owner_admin_id=100, admin_ids={100, 200}) == UserRole.OWNER
     assert resolve_admin_role(200, owner_admin_id=100, admin_ids={100, 200}) == UserRole.MODERATOR
+    assert resolve_admin_role(100, owner_admin_id=100, user_role=UserRole.USER) == UserRole.OWNER
+    assert resolve_admin_role(200, admin_ids={100, 200}, user_role=UserRole.USER) == UserRole.MODERATOR
     assert can_manage_admins(UserRole.OWNER)
     assert not can_manage_admins(UserRole.MODERATOR)
     assert can_review_moderator_decisions(UserRole.CHIEF_MODERATOR)
     assert not can_review_moderator_decisions(UserRole.MODERATOR)
+
+
+def test_explicit_owner_id_is_validated_and_overrides_admin_sorting():
+    settings = Settings(
+        _env_file=None,
+        bot_token="x" * 30,
+        daily_secret_salt="y" * 20,
+        admin_ids_raw="100,200",
+        owner_admin_id_raw="200",
+    )
+
+    assert settings.owner_admin_id == 200
 
 
 def test_backend_role_hierarchy_blocks_forbidden_admin_actions():

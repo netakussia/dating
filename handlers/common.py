@@ -118,7 +118,7 @@ async def help_(message: Message, settings, session: AsyncSession) -> None:
     for admin_id in admin_ids:
         user = await session.get(User, admin_id)
         username = user.username if user and user.username else None
-        label = admin_role_label(admin_id, username=username, owner_admin_id=admin_ids[0] if admin_ids else None)
+        label = admin_role_label(admin_id, username=username, owner_admin_id=settings.owner_admin_id)
         support_lines.append(f'<a href="tg://user?id={admin_id}">{label}</a>')
     support = "\n".join(support_lines) if support_lines else "Служба поддержки не настроена."
     markup = documents_keyboard(
