@@ -9,6 +9,7 @@ from services.photo_moderation_service import (
     PhotoAssessment,
     PhotoModerationService,
     PhotoValidationError,
+    moderation_zone,
     normalize_image,
 )
 from services.photo_safety_providers import (
@@ -29,6 +30,11 @@ def safety_settings(**changes):
         "face_detection_max_dimension": 960,
         "photo_safety_min_dimension": 64,
         "photo_safety_max_pixels": 1_000_000,
+        "meanima_internal_chat_id": None,
+        "meanima_internal_bug_thread_id": None,
+        "meanima_internal_moderation_thread_id": None,
+        "meanima_internal_errors_thread_id": None,
+        "meanima_internal_stats_thread_id": None,
     }
     values.update(changes)
     return SimpleNamespace(**values)
@@ -84,6 +90,40 @@ def test_invalid_or_too_small_images_are_rejected(payload):
         normalize_image(payload, safety_settings())
 
 
+def test_moderation_zone_matches_requested_cascade_policy():
+    green = PhotoAssessment(0.10, True, "test", face_score=0.90, face_count=1, human_score=0.90)
+    yellow_border = PhotoAssessment(0.10, True, "test", face_score=0.90, face_count=1, human_score=0.35)
+    yellow_human_disagreement = PhotoAssessment(0.006, True, "test", face_score=0.887, face_count=1, human_score=0.294)
+    yellow_soft = PhotoAssessment(0.25, True, "test", face_score=0.80, face_count=1, human_score=0.60)
+    red_low_face = PhotoAssessment(0.10, True, "test", face_score=0.45, face_count=1, human_score=0.80)
+    red_no_face = PhotoAssessment(0.00, False, "test", face_score=0.0, face_count=0, human_score=0.0)
+    red_multi_face = PhotoAssessment(0.10, True, "test", face_score=0.90, face_count=2, human_score=0.90)
+    yellow_fallback = PhotoAssessment(
+        0.00,
+        True,
+        "test",
+        face_score=0.60,
+        face_count=1,
+        human_score=0.60,
+        fallback_reason="ML_PROVIDER_FALLBACK",
+    )
+
+    assert moderation_zone(green) == "GREEN"
+    assert moderation_zone(yellow_border) == "YELLOW"
+    assert moderation_zone(yellow_human_disagreement) == "YELLOW"
+    assert moderation_zone(yellow_soft) == "YELLOW"
+    assert moderation_zone(red_low_face) == "RED"
+    assert moderation_zone(red_no_face) == "RED"
+    assert moderation_zone(red_multi_face) == "RED"
+    assert moderation_zone(yellow_fallback) == "YELLOW"
+
+
+def test_borderline_nsfw_score_is_yellow_until_configured_red_threshold():
+    assessment = PhotoAssessment(0.50, True, "test", face_score=0.90, face_count=1, human_score=0.90)
+
+    assert moderation_zone(assessment) == "YELLOW"
+
+
 class FakeBot:
     def __init__(self, raw):
         self.raw = raw
@@ -114,14 +154,21 @@ class FakePhotoRepository:
     async def photo_by_hash(self, _content_hash):
         return self.cached
 
-    async def record_photo(self, _user_id, _file_id, provider, score, face, content_hash):
-        item = SimpleNamespace(provider=provider, nsfw_score=score, face_detected=face, content_hash=content_hash)
+    async def record_photo(
+        self, _user_id, _file_id, provider, score, face, content_hash,
+        face_score=0.0, face_count=0, human_score=0.0, fallback_reason=None,
+    ):
+        item = SimpleNamespace(
+            provider=provider, nsfw_score=score, face_detected=face, content_hash=content_hash,
+            face_score=face_score, face_count=face_count, human_score=human_score,
+            fallback_reason=fallback_reason,
+        )
         self.records.append(item)
         self.cached = item
         return item
 
     async def open_case(self, *_args, **_kwargs):
-        return None, True
+        return SimpleNamespace(id="case-1"), True
 
 
 class FakeSession:
@@ -146,3 +193,60 @@ async def test_identical_normalized_photo_reuses_saved_assessment():
 
     assert provider.calls == 1
     assert cached.provider == "counting:cached"
+
+
+@pytest.mark.asyncio
+async def test_cached_cascade_assessment_does_not_drop_multiple_faces():
+    provider = CountingProvider()
+    service = PhotoModerationService(
+        FakeSession(),
+        nsfw_threshold=0.85,
+        provider=provider,
+        settings=safety_settings(photo_safety_max_bytes=1_000_000),
+        bot=FakeBot(image_bytes()),
+    )
+    repository = FakePhotoRepository()
+    repository.cached = SimpleNamespace(
+        nsfw_score=0.10,
+        face_detected=True,
+        provider="ml_onnx",
+        face_score=0.90,
+        face_count=2,
+        human_score=0.90,
+    )
+    service.repo = repository
+
+    assessment = await service.inspect(1, "photo")
+
+    assert moderation_zone(assessment) == "RED"
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cached_no_face_assessment_is_rechecked_by_current_provider():
+    provider = CountingProvider()
+    service = PhotoModerationService(
+        FakeSession(),
+        nsfw_threshold=0.85,
+        provider=provider,
+        settings=safety_settings(photo_safety_max_bytes=1_000_000),
+        bot=FakeBot(image_bytes()),
+    )
+    repository = FakePhotoRepository()
+    repository.cached = SimpleNamespace(
+        nsfw_score=0.0,
+        face_detected=False,
+        provider="ml_onnx",
+        face_score=0.0,
+        face_count=0,
+        human_score=0.0,
+    )
+    service.repo = repository
+
+    assessment = await service.inspect(1, "photo")
+
+    assert provider.calls == 1
+    assert assessment.face_detected is True
+    assert assessment.provider == "counting"
+    assert repository.cached.face_detected is True
+    assert repository.cached.face_count == 1

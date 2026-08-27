@@ -12,7 +12,7 @@ from models import ModerationStatus, User, UserStatus
 from services.interest_normalizer import format_interests
 from services.localization import LocalizationService
 from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
-from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
+from services.photo_moderation_service import RED, YELLOW, PhotoModerationError, PhotoModerationService, moderation_zone
 from services.photo_upload_lock import PhotoUploadBusyError, photo_upload_lock
 from services.profile_service import ProfileService
 from states.profile_photo import ProfilePhotoState
@@ -392,17 +392,11 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
                 await message.answer(str(error))
             except PhotoModerationError:
                 await dismiss_photo_analysis_progress(progress)
-                await message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
+                await message.answer(localizer.get("photo_check_error", profile.locale))
             else:
                 await dismiss_photo_analysis_progress(progress)
-                if assessment.nsfw_score >= settings.nsfw_threshold:
-                    await state.clear()
-                    await message.answer(
-                        "⚠️ Фото не прошло автоматическую проверку и отправлено модераторам. "
-                        "До решения анкета скрыта."
-                    )
-                    return
-                if not assessment.face_detected:
+                photo_zone = moderation_zone(assessment, nsfw_red_threshold=settings.nsfw_threshold)
+                if photo_zone == RED:
                     if old_photo_id is None:
                         await profile_service.remove_photo(message.from_user.id, photo_id)
                     else:
@@ -414,20 +408,23 @@ async def save_changed_photo(message: Message, state: FSMContext, session: Async
                     )
                     await state.set_state(ProfilePhotoState.awaiting_manual_review)
                     await message.answer(
-                        "⚠️ На фото не удалось уверенно найти лицо. Анкета остаётся без изменений. "
-                        "Замените фото или отправьте именно его на ручную проверку.",
-                        reply_markup=failed_photo_keyboard(),
+                        localizer.get("photo_red", profile.locale),
+                        reply_markup=failed_photo_keyboard(profile.locale),
                     )
                     return
                 updated_profile = await profile_service.get_profile(message.from_user.id)
+                if photo_zone == YELLOW:
+                    await message.answer(localizer.get("photo_yellow", profile.locale))
                 if data.get("photo_action") == "add" and updated_profile and len(updated_profile.photo_file_ids) < 3:
                     await message.answer(
-                        f"✅ Фото сохранено. Загружено {len(updated_profile.photo_file_ids)}/3.",
+                        localizer.format(
+                            "photo_saved_count", profile.locale, count=len(updated_profile.photo_file_ids)
+                        ),
                         reply_markup=photo_upload_keyboard("photo:done"),
                     )
                     return
                 await message.answer(
-                    "✅ Фотография сохранена.",
+                    localizer.get("photo_saved", profile.locale),
                     reply_markup=(
                         photo_management_keyboard(len(updated_profile.photo_file_ids)) if updated_profile else None
                     ),
@@ -470,7 +467,7 @@ async def review_failed_photo(
         ).inspect(callback.from_user.id, photo_id)
     except PhotoModerationError:
         await state.clear()
-        await callback.message.answer("⚠️ Фото отправлено модераторам. До решения анкета скрыта.")
+        await callback.message.answer(localizer.get("photo_manual_submitted", profile.locale))
         await callback.answer()
         return
     except ValueError:
@@ -479,10 +476,13 @@ async def review_failed_photo(
         await callback.answer()
         return
     await state.clear()
-    if assessment.nsfw_score >= settings.nsfw_threshold or not assessment.face_detected:
-        await callback.message.answer("⚠️ Фото отправлено модераторам. До решения анкета скрыта.")
+    photo_zone = moderation_zone(assessment, nsfw_red_threshold=settings.nsfw_threshold)
+    if photo_zone == RED:
+        await callback.message.answer(localizer.get("photo_manual_submitted", profile.locale))
+    elif photo_zone == YELLOW:
+        await callback.message.answer(localizer.get("photo_yellow", profile.locale))
     else:
-        await callback.message.answer("✅ Повторная проверка прошла успешно. Фото сохранено.")
+        await callback.message.answer(localizer.get("photo_saved", profile.locale))
     await callback.answer()
 
 

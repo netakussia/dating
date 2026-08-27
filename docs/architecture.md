@@ -18,7 +18,7 @@
 
 Recommendation layer разделён на три контракта: `RecommendationStrategy` оценивает кандидата, `RecommendationQueue` управляет временной очередью, `RecommendationRepository` выполняет SQL-фильтры и записывает просмотры. `RecommendationService` координирует их, но не знает деталей будущей ML/Redis реализации.
 
-Trust System использует те же слои: handlers вызывают независимые `VerificationService`, `ReportService`, `ModerationService`, `PhotoModerationService`, `TrustScoreService` и `TrustStatsService`; SQL и журнал аудита находятся в `TrustRepository`. Рейтинг доступен исключительно внутренним алгоритмам. Анкеты `UNDER_REVIEW` исключаются на уровне SQL в `RecommendationRepository`; при ошибке provider проверки фото анкета скрывается до ручного решения.
+Trust System использует те же слои: handlers вызывают независимые `VerificationService`, `ReportService`, `ModerationService`, `PhotoModerationService`, `TrustScoreService` и `TrustStatsService`; SQL и журнал аудита находятся в `TrustRepository`. Рейтинг доступен исключительно внутренним алгоритмам. Анкеты `UNDER_REVIEW` исключаются на уровне SQL в `RecommendationRepository`; при ошибке ML-провайдера фото получает YELLOW и создаётся кейс `ML_PROVIDER_FALLBACK`.
 
 ## Запуск
 Точка входа — main.py. При запуске:
@@ -56,7 +56,7 @@ storage с общим TTL `FSM_STATE_TTL_SECONDS`. Неожиданный тек
 - UI-тексты не полностью вынесены в отдельный слой локализации.
 - Часть логики всё ещё находится в обработчиках, особенно в сценариях FSM.
 - Recommendation queue хранится в Redis по ключу `recommendation_queue:<user_id>`. Очередь пересоздаётся при отсутствии записи, изменяется при skip/like/block и очищается при remove/clear. Для неё намеренно не установлен TTL: это disposable состояние, а rebuild является источником восстановления.
-- Проверка фото выбирается конфигурацией через `PhotoSafetyProvider`: локальный ONNX/OpenCV ML-провайдер, development heuristic или явный disabled. В ML-режиме изображение нормализуется и хэшируется до inference, поэтому повторная проверка не запускает модель; ошибка любой стадии fail-closed отправляет анкету в ручную модерацию.
+- Проверка фото выбирается конфигурацией через `PhotoSafetyProvider`: локальный ONNX/OpenCV ML-провайдер, development heuristic или явный disabled. В ML-режиме изображение нормализуется и хэшируется до inference, поэтому повторная проверка не запускает модель; ошибка ML-инференса fail-soft отправляет сигнал в YELLOW и создаёт кейс `ML_PROVIDER_FALLBACK`.
 - Для горизонтального масштабирования используется Redis-адаптер для очередей рекомендаций.
 - Обёртка savepoint защищает конкурентные Like/Match, но полноценное управление транзакциями и retry-политика ещё не выделены в отдельный слой.
 - Текущий контракт ранжирования по одному кандидату не оптимален для внешних/batch ML-моделей.

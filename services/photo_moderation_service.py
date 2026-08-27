@@ -17,6 +17,7 @@ from services.notification_service import InternalNotificationService
 from services.photo_safety_providers import (
     PhotoAssessment,
     PhotoSafetyProvider,
+    PhotoSafetyProviderError,
     SafeImage,
     get_photo_safety_provider,
 )
@@ -30,6 +31,50 @@ class PhotoModerationError(RuntimeError):
 
 class PhotoValidationError(PhotoModerationError):
     pass
+
+
+GREEN = "GREEN"
+YELLOW = "YELLOW"
+RED = "RED"
+
+
+def moderation_zone(assessment: PhotoAssessment, *, nsfw_red_threshold: float = 0.85) -> str:
+    """Traffic-light policy following the requested fail-soft cascade.
+
+    The real-human score is the liveness signal, while the fallback flag is the
+    advisory escape hatch: it keeps the profile visible but creates a moderation
+    case instead of blocking the user.
+    
+    Policy:
+    - RED: clear signs of problematic content (high NSFW, no face, multiple faces)
+    - YELLOW: uncertain cases (low face quality, ML fallback, borderline NSFW)
+    - GREEN: excellent portraits with high confidence across all signals
+    """
+    if assessment.fallback_reason:
+        return YELLOW
+    
+    # Hard RED cases: high NSFW or multiple faces
+    if assessment.nsfw_score >= nsfw_red_threshold or assessment.face_count > 1:
+        return RED
+    
+    # No face detected
+    if not assessment.face_detected:
+        # A dating profile without a face cannot be accepted as a portrait.
+        return RED
+    
+    # A weak face detector score is a hard failure. A disagreement with the
+    # secondary human signal is uncertain and belongs in manual review.
+    if assessment.face_score < 0.50:
+        return RED
+    if assessment.human_score < 0.35:
+        return YELLOW
+    
+    # Excellent portrait
+    if assessment.face_score > 0.80 and assessment.human_score > 0.80 and assessment.nsfw_score < 0.20:
+        return GREEN
+    
+    # Everything else: borderline case
+    return YELLOW
 
 
 class TelegramPhotoSource:
@@ -103,8 +148,18 @@ class PhotoModerationService:
                 image = normalize_image(raw, settings)
                 content_hash = hashlib.sha256(image.rgb_bytes).hexdigest()
                 cached = await self.repo.photo_by_hash(content_hash)
-                if cached is not None:
-                    assessment = PhotoAssessment(cached.nsfw_score, cached.face_detected, f"{cached.provider}:cached")
+                # Rows created before cascade signals were persisted cannot be
+                # safely classified from nsfw_score/face_detected alone.
+                if cached is not None and getattr(cached, "face_count", 0) > 0:
+                    assessment = PhotoAssessment(
+                        cached.nsfw_score,
+                        cached.face_detected,
+                        f"{cached.provider}:cached",
+                        face_score=getattr(cached, "face_score", 0.0),
+                        face_count=getattr(cached, "face_count", 0),
+                        human_score=getattr(cached, "human_score", 0.0),
+                        fallback_reason=getattr(cached, "fallback_reason", None),
+                    )
                     await self._apply_assessment(
                         user_id, photo_file_id, content_hash, assessment, defer_no_face_review=defer_no_face_review
                     )
@@ -112,10 +167,36 @@ class PhotoModerationService:
             assessment = await self.provider.assess(image)
             if not 0.0 <= assessment.nsfw_score <= 1.0:
                 raise ValueError("NSFW score must be between 0 and 1")
+        except PhotoSafetyProviderError as error:
+            # ML is advisory when unavailable: keep the profile usable, capture a
+            # review case, and never turn an outage into a user-facing rejection.
+            logger.warning("Photo safety provider fallback for user %s: %s (%s)", user_id, type(error).__name__, error)
+            assessment = PhotoAssessment(
+                nsfw_score=0.0,
+                face_detected=True,
+                provider="ml_provider_fallback",
+                face_score=0.60,
+                face_count=1,
+                human_score=0.60,
+                fallback_reason="ML_PROVIDER_FALLBACK",
+            )
         except Exception as error:
-            logger.warning("Photo safety check failed for user %s: %s", user_id, type(error).__name__)
-            await self._send_to_manual_review(user_id, photo_file_id, content_hash, type(error).__name__)
-            raise PhotoModerationError("Photo safety check failed") from error
+            # Fetch/normalization failures arrive before a SafeImage exists. Any
+            # later exception is provider-side (including ORT's version-specific
+            # exception classes) and is deliberately fail-soft.
+            if image is None and self.bot is not None:
+                logger.warning("Photo input validation failed for user %s: %s", user_id, type(error).__name__)
+                raise PhotoModerationError("Photo safety check failed") from error
+            logger.warning("Photo safety provider fallback for user %s: %s (%s)", user_id, type(error).__name__, error)
+            assessment = PhotoAssessment(
+                nsfw_score=0.0,
+                face_detected=True,
+                provider="ml_provider_fallback",
+                face_score=0.60,
+                face_count=1,
+                human_score=0.60,
+                fallback_reason="ML_PROVIDER_FALLBACK",
+            )
         await self._apply_assessment(
             user_id, photo_file_id, content_hash, assessment, defer_no_face_review=defer_no_face_review
         )
@@ -131,25 +212,39 @@ class PhotoModerationService:
         defer_no_face_review: bool = False,
     ) -> None:
         await self.repo.record_photo(
-            user_id, photo_file_id, assessment.provider, assessment.nsfw_score, assessment.face_detected, content_hash
+            user_id,
+            photo_file_id,
+            assessment.provider,
+            assessment.nsfw_score,
+            assessment.face_detected,
+            content_hash,
+            assessment.face_score,
+            assessment.face_count,
+            assessment.human_score,
+            assessment.fallback_reason,
         )
         profile = await self.session.scalar(select(Profile).where(Profile.user_id == user_id))
-        is_nsfw = assessment.nsfw_score >= self.threshold
-        if not is_nsfw and not assessment.face_detected and defer_no_face_review:
+        zone = moderation_zone(assessment, nsfw_red_threshold=self.threshold)
+        if zone == RED and defer_no_face_review:
             return
-        if is_nsfw or not assessment.face_detected:
+        if zone == RED:
             if profile:
                 profile.moderation_status = ModerationStatus.UNDER_REVIEW
                 profile.is_visible = False
                 profile.moderation_locked = True
-            case_type = ModerationCaseType.NSFW if is_nsfw else ModerationCaseType.NO_FACE
+            case_type = (
+                ModerationCaseType.NSFW
+                if assessment.nsfw_score >= self.threshold
+                else ModerationCaseType.NO_FACE
+                if not assessment.face_detected
+                else ModerationCaseType.PHOTO_RETAKE
+            )
             case, _ = await self.repo.open_case(
                 user_id,
                 case_type,
                 source_id=content_hash or photo_file_id,
                 details=(
-                    f"provider={assessment.provider}; score={assessment.nsfw_score:.3f}; "
-                    f"face={assessment.face_detected}"
+                    self._details(assessment, zone)
                 ),
             )
             if self.bot is not None:
@@ -160,18 +255,52 @@ class PhotoModerationService:
                     case_id=str(case.id),
                     target_callback=f"mycase:case:{case.id}",
                     details=(
-                        f"provider={assessment.provider}; score={assessment.nsfw_score:.3f}; "
-                        f"face_detected={assessment.face_detected}"
+                        self._details(assessment, zone)
                     ),
                 )
+        elif zone == YELLOW:
+            if profile and not profile.moderation_locked:
+                profile.moderation_status = ModerationStatus.CLEAR
+                profile.is_visible = True
+                profile.moderation_locked = False
+            case_type = (
+                ModerationCaseType.ML_PROVIDER_FALLBACK
+                if assessment.fallback_reason
+                else ModerationCaseType.PHOTO_RETAKE
+            )
+            await self.repo.open_case(
+                user_id, case_type, source_id=content_hash or photo_file_id, details=self._details(assessment, zone)
+            )
         else:
             close_photo_cases = getattr(self.repo, "close_photo_cases", None)
             if close_photo_cases is not None:
                 await close_photo_cases(user_id)
-            if profile and profile.moderation_locked:
-                # Freeze/lock is a moderator-controlled state. A successful photo check
-                # must never automatically lift a moderation restriction.
-                return
+            if profile:
+                # A fresh successful moderation pass is the authoritative signal that
+                # the user has replaced a rejected photo. The previous auto-review lock
+                # is stale once the new image is accepted, so unlock it and restore
+                # visibility. If a real moderator freeze exists elsewhere, it is still
+                # represented by a separate flow and can be handled independently.
+                if profile.moderation_locked and profile.moderation_status == ModerationStatus.UNDER_REVIEW:
+                    profile.moderation_status = ModerationStatus.CLEAR
+                    profile.is_visible = True
+                    profile.moderation_locked = False
+                    return
+                if profile.moderation_locked:
+                    # Freeze/lock is a moderator-controlled state. A successful photo check
+                    # must never automatically lift a moderation restriction.
+                    return
+                profile.moderation_status = ModerationStatus.CLEAR
+                profile.is_visible = True
+                profile.moderation_locked = False
+
+    @staticmethod
+    def _details(assessment: PhotoAssessment, zone: str) -> str:
+        return (
+            f"zone={zone}; provider={assessment.provider}; nsfw={assessment.nsfw_score:.3f}; "
+            f"face_score={assessment.face_score:.3f}; face_count={assessment.face_count}; "
+            f"human_score={assessment.human_score:.3f}; reason={assessment.fallback_reason or '-'}"
+        )
 
     async def _send_to_manual_review(
         self, user_id: int, photo_file_id: str, content_hash: str | None, error_name: str

@@ -33,6 +33,13 @@ def test_romanian_ui_uses_translated_labels():
     assert profile_keyboard(locale="ro").inline_keyboard[-1][0].text == "🌐 Язык / Limba"
 
 
+def test_alpha_notice_is_localized():
+    localizer = LocalizationService()
+
+    assert "Atenție" in localizer.get("alpha_notice", "ro")
+    assert "Внимание" in localizer.get("alpha_notice", "ru")
+
+
 def test_romanian_dating_and_empty_state_are_translated():
     from keyboards.dating import dating_keyboard
 

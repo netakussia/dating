@@ -270,7 +270,13 @@ async def _show_next_photo_case(callback: CallbackQuery, session: AsyncSession) 
     items = [
         item
         for item in items
-        if item.case_type in {ModerationCaseType.NSFW, ModerationCaseType.NO_FACE, ModerationCaseType.PHOTO_RETAKE}
+        if item.case_type
+        in {
+            ModerationCaseType.NSFW,
+            ModerationCaseType.NO_FACE,
+            ModerationCaseType.PHOTO_RETAKE,
+            ModerationCaseType.ML_PROVIDER_FALLBACK,
+        }
     ]
     if not items:
         await callback.message.answer(
@@ -964,21 +970,24 @@ async def moderation_case(callback: CallbackQuery, session: AsyncSession, settin
     case, changed, _ = await service.resolve_case(
         case_id,
         callback.from_user.id,
-        restore=action in {"restore", "reject"},
+        restore=action == "restore",
         retake=action == "retake",
+        reject=action == "reject",
         actor_role=actor_role,
     )
     if not changed:
         handled_by = await _admin_label(session, case.admin_id if case else None)
         await callback.answer(f"Этот кейс уже обработан модератором {handled_by}.", show_alert=True)
         return
-    if action in {"restore", "reject"}:
+    if action == "restore":
         user_message = "✅ Фото одобрено. Ваша анкета снова видна в знакомствах."
-        result = (
-            "✅ Кейс отклонён, анкета восстановлена."
-            if action == "reject"
-            else "✅ Фото одобрено, анкета восстановлена."
+        result = "✅ Фото одобрено, анкета восстановлена."
+    elif action == "reject":
+        user_message = (
+            "❌ Фото отклонено. Анкета скрыта; откройте «Моя анкета» → «Управлять фото» "
+            "и загрузите новое фото."
         )
+        result = "❌ Фото отклонено, анкета скрыта; пользователю предложена замена фото."
     else:
         user_message = (
             "📝 Фото нужно заменить. Откройте «Моя анкета» → «Управлять фото» "
@@ -1176,7 +1185,7 @@ async def moderate(callback: CallbackQuery, session: AsyncSession, settings: Set
     elif action == "hide":
         try:
             async with session.begin_nested():
-                resolved = await repo.resolve(report_id, ReportStatus.APPROVED, admin_id=callback.from_user.id)
+                resolved = await repo.resolve(report_id, ReportStatus.APPROVED)
                 if resolved is None:
                     raise _SanctionNotApplied
                 suspended = await ModerationService(session).suspend(
@@ -1257,6 +1266,9 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
         return
     if len(parts) == 4 and parts[1] == "prompt":
         _, _, action, raw_id = parts
+        if action not in {"restore", "reject"}:
+            await callback.answer("Некорректное решение по апелляции", show_alert=True)
+            return
         action_name = "отклонение апелляции" if action == "reject" else "одобрение апелляции"
         try:
             appeal_id = uuid.UUID(raw_id)
@@ -1280,12 +1292,15 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
         return
     if len(parts) == 4 and parts[1] == "execute":
         _, _, action, raw_id = parts
-    else:
+    elif len(parts) == 3 and parts[1] in {"release", "reply", "restore", "reject"}:
         try:
             _, action, raw_id = parts
         except (ValueError, TypeError):
             await callback.answer("Некорректная апелляция", show_alert=True)
             return
+    else:
+        await callback.answer("Некорректная апелляция", show_alert=True)
+        return
     try:
         appeal_id = uuid.UUID(raw_id)
     except (ValueError, TypeError):
@@ -1364,7 +1379,7 @@ async def appeal_action(callback: CallbackQuery, state: FSMContext, session: Asy
             "✅ Апелляция одобрена. Ограничение снято; при желании включите видимость анкеты.",
         )
         result = "Апелляция одобрена, аккаунт восстановлен."
-    elif action in {"reject", "execute"}:
+    elif action == "reject":
         resolved = await repo.resolve(appeal_id, AppealStatus.REJECTED, callback.from_user.id)
         if resolved is None:
             await callback.answer("Апелляция уже обработана", show_alert=True)

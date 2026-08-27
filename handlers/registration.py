@@ -6,7 +6,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dtos.profile_dto import ProfileDraft
@@ -16,7 +16,7 @@ from keyboards.profile import photo_upload_keyboard, registration_preview_keyboa
 from services.interest_normalizer import format_interests
 from services.localization import LocalizationService
 from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
-from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
+from services.photo_moderation_service import RED, PhotoModerationError, PhotoModerationService, moderation_zone
 from services.photo_upload_lock import PhotoUploadBusyError, photo_upload_lock
 from services.profile_service import ProfileService
 from states.registration import RegistrationState
@@ -96,6 +96,23 @@ def _step_prompt(step: str, locale: str) -> str:
     total = len(STEP_ORDER)
     bar = _progress_bar(number, total)
     return f"📝 Шаг {number}/{total}\n{bar}\n{localizer.get(f'registration_step_{step}', locale=locale)}"
+
+
+def _red_photo_keyboard(locale: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=localizer.get("photo_replace", locale), callback_data="registration:red:replace"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=localizer.get("photo_manual_review", locale), callback_data="registration:red:review"
+                )
+            ],
+        ]
+    )
 
 
 async def _show_step(message: Message | CallbackQuery, state: FSMContext, step: str) -> None:
@@ -357,6 +374,7 @@ async def photo(message: Message, state: FSMContext) -> None:
     try:
         async with photo_upload_lock(message.bot, message.from_user.id):
             draft = await _get_draft(state)
+            locale = draft.get("locale") or _language_code(message)
             photos = list(draft.get("photo_file_ids") or [])
             file_id = message.photo[-1].file_id
             replacing_photos = bool(
@@ -373,7 +391,7 @@ async def photo(message: Message, state: FSMContext) -> None:
             await _set_draft(state, photo_file_ids=photos, main_photo_file_id=photos[0] if photos else None)
             if len(photos) < 3:
                 await message.answer(
-                    f"📸 Загружено {len(photos)}/3 фото. Можно добавить ещё или нажать «Готово».",
+                    localizer.format("photo_upload_count", locale, count=len(photos)),
                     reply_markup=photo_upload_keyboard("registration:photos_done"),
                 )
                 return
@@ -430,8 +448,7 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
         await callback.message.answer(f"Проверьте анкету:\n{details}")
         await callback.answer("Данные анкеты не прошли проверку", show_alert=True)
         return
-    flagged_no_face = False
-    flagged_nsfw = False
+    zone = None
     photo_moderation = PhotoModerationService(
         session, nsfw_threshold=settings.nsfw_threshold, settings=settings, bot=callback.bot
     )
@@ -439,33 +456,44 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
     try:
         for photo_file_id in payload.photo_file_ids:
             assessment = await photo_moderation.inspect(callback.from_user.id, photo_file_id)
-            flagged_no_face = flagged_no_face or not assessment.face_detected
-            flagged_nsfw = flagged_nsfw or assessment.nsfw_score >= settings.nsfw_threshold
+            candidate_zone = moderation_zone(assessment, nsfw_red_threshold=settings.nsfw_threshold)
+            if candidate_zone == RED:
+                zone = RED
+            elif zone is None:
+                zone = candidate_zone
     except PhotoModerationError:
         await dismiss_photo_analysis_progress(progress)
-        await state.clear()
-        await callback.message.answer("⚠️ Не удалось проверить фото. Анкета скрыта и отправлена модераторам.")
+        await callback.message.answer(localizer.get("photo_check_error", locale))
         await callback.answer()
         return
     await dismiss_photo_analysis_progress(progress)
-    await state.clear()
-    if flagged_nsfw:
+    if zone == RED:
         await callback.message.answer(
-            "⚠️ Фото отправлено на проверку модераторам. До решения анкета скрыта.\n"
-            "Вы можете продолжить использование бота или заглянуть в «👤 Моя анкета».",
-            reply_markup=main_menu(locale),
+            localizer.get("photo_red", locale), reply_markup=_red_photo_keyboard(locale)
         )
-    elif flagged_no_face:
-        await callback.message.answer(
-            "⚠️ На фото не найдено лицо. Замените фотографию в профиле; анкета отправлена на проверку.",
-            reply_markup=main_menu(locale),
-        )
+        await _set_step(state, "photo")
     else:
-        await callback.message.answer(
-            "✅ Ваша анкета успешно опубликована!\n\n"
-            "Теперь вы можете искать пару в разделе «💘 Знакомства» или настроить анкету в «👤 Моя анкета».",
-            reply_markup=main_menu(locale),
-        )
+        await state.clear()
+        if zone == "YELLOW":
+            await callback.message.answer(localizer.get("photo_yellow", locale), reply_markup=main_menu(locale))
+        else:
+            await callback.message.answer(localizer.get("profile_published", locale), reply_markup=main_menu(locale))
+    await callback.answer()
+
+
+@router.callback_query(RegistrationState.photo, F.data == "registration:red:replace")
+async def replace_red_photo(callback: CallbackQuery, state: FSMContext) -> None:
+    await _set_draft(state, photo_file_ids=[], main_photo_file_id=None)
+    locale = (await _get_draft(state)).get("locale") or "ru"
+    await callback.message.answer(localizer.get("photo_replace_prompt", locale))
+    await callback.answer()
+
+
+@router.callback_query(RegistrationState.photo, F.data == "registration:red:review")
+async def review_red_photo(callback: CallbackQuery, state: FSMContext) -> None:
+    locale = (await _get_draft(state)).get("locale") or "ru"
+    await state.clear()
+    await callback.message.answer(localizer.get("photo_manual_submitted", locale), reply_markup=main_menu(locale))
     await callback.answer()
 
 

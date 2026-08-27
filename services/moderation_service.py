@@ -165,6 +165,7 @@ class ModerationService:
         *,
         restore: bool = False,
         retake: bool = False,
+        reject: bool = False,
         actor_role: UserRole | None = None,
     ) -> tuple[ModerationCase | None, bool, str | None]:
         case = await self.session.get(ModerationCase, case_id)
@@ -210,9 +211,10 @@ class ModerationService:
             if restore:
                 profile.moderation_locked = False
                 profile.is_visible = True
-            elif retake:
-                # A replacement request is not an approval.  Keep the account
-                # frozen until a moderator explicitly restores it after review.
+            elif retake or reject:
+                # A negative photo decision keeps the profile hidden until replacement.
+                profile.moderation_status = ModerationStatus.UNDER_REVIEW
+                profile.moderation_locked = True
                 profile.is_visible = False
         await self.repo.log(
             admin_id,
@@ -297,6 +299,11 @@ class ModerationService:
         if user is None or getattr(user, "status", None) != UserStatus.BANNED:
             return False
         user.status = UserStatus.ACTIVE
+        profile = await self.session.scalar(select(Profile).where(Profile.user_id == user_id))
+        if profile:
+            profile.is_visible = True
+            profile.moderation_locked = False
+            profile.moderation_status = ModerationStatus.CLEAR
         await self.repo.log(
             admin_id,
             "UNBAN",

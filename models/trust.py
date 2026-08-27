@@ -30,6 +30,7 @@ class ModerationCaseType(str, enum.Enum):
     NSFW = "NSFW"
     NO_FACE = "NO_FACE"
     PHOTO_RETAKE = "PHOTO_RETAKE"
+    ML_PROVIDER_FALLBACK = "ML_PROVIDER_FALLBACK"
 
 
 class ModerationCaseStatus(str, enum.Enum):
@@ -92,6 +93,10 @@ class PhotoModeration(UUIDPKMixin, TimestampMixin, Base):
     provider: Mapped[str] = mapped_column(String(64), default="heuristic")
     nsfw_score: Mapped[float] = mapped_column(Float, default=0.0)
     face_detected: Mapped[bool] = mapped_column(default=True)
+    face_score: Mapped[float] = mapped_column(Float, default=0.0)
+    face_count: Mapped[int] = mapped_column(default=0)
+    human_score: Mapped[float] = mapped_column(Float, default=0.0)
+    fallback_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class TrustScoreEvent(UUIDPKMixin, TimestampMixin, Base):

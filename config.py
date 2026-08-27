@@ -1,5 +1,6 @@
 import json
 import math
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -28,6 +29,8 @@ class Settings(BaseSettings):
         explicit = dict(data)
         super().__init__(**data)
         for name in (
+            "admin_ids_raw",
+            "owner_admin_id_raw",
             "meanima_internal_chat_id",
             "meanima_internal_bug_thread_id",
             "meanima_internal_moderation_thread_id",
@@ -36,6 +39,10 @@ class Settings(BaseSettings):
         ):
             if name in explicit:
                 object.__setattr__(self, name, explicit[name])
+        # Retain the documented short legacy variable even when a container
+        # also injects MEANIMA_INTERNAL_CHAT_ID through its env_file.
+        if "meanima_internal_chat_id" not in explicit and (legacy_chat := os.environ.get("MEANIMA_INTERNAL_CHAT")):
+            object.__setattr__(self, "meanima_internal_chat_id", int(legacy_chat))
         if self.environment.lower() in {"production", "prod", "staging"} and self.photo_safety_provider != "ml":
             raise ValueError("PHOTO_SAFETY_PROVIDER must be 'ml' in production-like environments.")
 
@@ -55,11 +62,13 @@ class Settings(BaseSettings):
     )
     nsfw_model_path: str = "/models/open_nsfw.onnx"
     face_model_path: str = "/models/face_detection_yunet_2023mar.onnx"
-    face_detection_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    person_model_path: str = "/models/scrfd_person_2.5g.onnx"
+    face_detection_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
     photo_safety_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
     photo_safety_max_pixels: int = Field(default=24_000_000, ge=1)
     photo_safety_min_dimension: int = Field(default=64, ge=1)
     face_detection_max_dimension: int = Field(default=960, ge=320, le=2048)
+    photo_safety_inference_timeout_seconds: float = Field(default=12.0, gt=0, le=120)
     matching_weights_raw: str = Field(default="", alias="MATCHING_WEIGHTS_JSON")
     report_threshold: int = Field(default=3, ge=1, alias="REPORT_THRESHOLD")
     confession_daily_limit: int = Field(default=20, ge=1, le=100, alias="CONFESSION_DAILY_LIMIT")

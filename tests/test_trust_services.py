@@ -327,8 +327,7 @@ def test_new_profile_defaults_are_unverified():
 
 
 @pytest.mark.asyncio
-async def test_photo_provider_failure_hides_profile_and_opens_review_case():
-    from services.photo_moderation_service import PhotoModerationError
+async def test_photo_provider_failure_is_fail_soft_and_opens_fallback_review_case():
 
     profile = SimpleNamespace(
         moderation_status=ModerationStatus.CLEAR,
@@ -338,16 +337,18 @@ async def test_photo_provider_failure_hides_profile_and_opens_review_case():
     session = FakeSession(profile=profile)
     session.scalar_values = [profile, None]
 
-    with pytest.raises(PhotoModerationError):
-        await PhotoModerationService(session, nsfw_threshold=0.85, provider=FailingProvider()).inspect(7, "photo")
+    assessment = await PhotoModerationService(
+        session, nsfw_threshold=0.85, provider=FailingProvider()
+    ).inspect(7, "photo")
 
-    assert profile.moderation_status == ModerationStatus.UNDER_REVIEW
-    assert not profile.is_visible and profile.moderation_locked
-    assert any(getattr(item, "case_type", None) == ModerationCaseType.NSFW for item in session.added)
+    assert assessment.fallback_reason == "ML_PROVIDER_FALLBACK"
+    assert profile.moderation_status == ModerationStatus.CLEAR
+    assert profile.is_visible and not profile.moderation_locked
+    assert any(getattr(item, "case_type", None) == ModerationCaseType.ML_PROVIDER_FALLBACK for item in session.added)
 
 
 @pytest.mark.asyncio
-async def test_frozen_profile_remains_frozen_after_safe_photo_assessment():
+async def test_successful_photo_replacement_clears_stale_review_lock():
     profile = SimpleNamespace(
         moderation_status=ModerationStatus.UNDER_REVIEW,
         is_visible=False,
@@ -361,13 +362,14 @@ async def test_frozen_profile_remains_frozen_after_safe_photo_assessment():
         record_photo=AsyncMock(),
         open_case=AsyncMock(return_value=(None, True)),
         pending_cases_for_user=AsyncMock(return_value=[]),
+        close_photo_cases=AsyncMock(return_value=1),
     )
 
     await service.inspect(7, "photo")
 
-    assert profile.moderation_status == ModerationStatus.UNDER_REVIEW
-    assert profile.is_visible is False
-    assert profile.moderation_locked is True
+    assert profile.moderation_status == ModerationStatus.CLEAR
+    assert profile.is_visible is True
+    assert profile.moderation_locked is False
 
 
 @pytest.mark.asyncio

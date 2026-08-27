@@ -137,7 +137,12 @@ class TrustRepository:
             .where(
                 ModerationCase.user_id == user_id,
                 ModerationCase.case_type.in_(
-                    (ModerationCaseType.NSFW, ModerationCaseType.NO_FACE, ModerationCaseType.PHOTO_RETAKE)
+                    (
+                        ModerationCaseType.NSFW,
+                        ModerationCaseType.NO_FACE,
+                        ModerationCaseType.PHOTO_RETAKE,
+                        ModerationCaseType.ML_PROVIDER_FALLBACK,
+                    )
                 ),
                 ModerationCase.status.in_((ModerationCaseStatus.PENDING, ModerationCaseStatus.IN_PROGRESS)),
             )
@@ -171,6 +176,10 @@ class TrustRepository:
         nsfw_score: float,
         face_detected: bool,
         content_hash: str | None = None,
+        face_score: float = 0.0,
+        face_count: int = 0,
+        human_score: float = 0.0,
+        fallback_reason: str | None = None,
     ) -> PhotoModeration:
         if content_hash:
             existing = await self.session.scalar(
@@ -179,6 +188,15 @@ class TrustRepository:
                 )
             )
             if existing:
+                existing.photo_file_id = photo_file_id
+                existing.provider = provider
+                existing.nsfw_score = nsfw_score
+                existing.face_detected = face_detected
+                existing.face_score = face_score
+                existing.face_count = face_count
+                existing.human_score = human_score
+                existing.fallback_reason = fallback_reason
+                await self.session.flush()
                 return existing
         item = PhotoModeration(
             user_id=user_id,
@@ -187,6 +205,10 @@ class TrustRepository:
             provider=provider,
             nsfw_score=nsfw_score,
             face_detected=face_detected,
+            face_score=face_score,
+            face_count=face_count,
+            human_score=human_score,
+            fallback_reason=fallback_reason,
         )
         self.session.add(item)
         await self.session.flush()

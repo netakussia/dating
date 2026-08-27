@@ -18,27 +18,22 @@ from utils.document_links import documents_keyboard
 from utils.legal import accept_consent, consent_already_given, ensure_consent_for_new_user
 from utils.text import escape_html
 
-ALPHA_NOTICE_TEXT = (
-    "🚀 <b>Внимание: Альфа-версия MeAnima</b>\n\n"
-    "Бот находится в режиме активного тестирования. "
-    "Если вы обнаружите баг или ошибку, нажмите «❓ Помощь» → «🐛 Сообщить о проблеме»."
-)
-
 router = Router()
+localizer = LocalizationService()
 
 
 async def _send_welcome(message: Message, locale: str = "ru") -> None:
-    await send_and_pin_alpha_notice(message)
+    await send_and_pin_alpha_notice(message, locale)
     await message.answer(
         LocalizationService().get("welcome", locale),
         reply_markup=main_menu(locale),
     )
 
 
-async def send_and_pin_alpha_notice(message: Message) -> None:
+async def send_and_pin_alpha_notice(message: Message, locale: str = "ru") -> None:
     """Send alpha notice and attempt to pin it quietly in private chat."""
     try:
-        notice_msg = await message.answer(ALPHA_NOTICE_TEXT)
+        notice_msg = await message.answer(localizer.get("alpha_notice", locale))
         await notice_msg.pin(disable_notification=True)
     except TelegramBadRequest:
         pass
