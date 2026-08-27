@@ -9,6 +9,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 
 from config import Settings, get_settings
+from repositories.profile import ProfileRepository
+from services.localization import LocalizationService
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,26 @@ class NotificationService:
 
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
+
+    async def safe_send_localized(
+        self,
+        user_id: int,
+        session,
+        key: str,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
+        dedupe_key: str | None = None,
+        **kwargs,
+    ) -> bool:
+        profile = await ProfileRepository(session).by_user_id(user_id)
+        locale = profile.locale if profile is not None else "ru"
+        text = LocalizationService().format(key, locale, **kwargs)
+        return await self.safe_send(
+            user_id,
+            text,
+            reply_markup=reply_markup,
+            dedupe_key=dedupe_key,
+        )
 
     async def _acquire_delivery(self, key: str, window: int) -> tuple[bool, str | None]:
         """Shared Redis idempotency lock; falls back only for legacy tests."""

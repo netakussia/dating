@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from handlers.verification import verification_start
 from keyboards.dating import dating_keyboard, report_reasons_keyboard
+from keyboards.menu import MENU_DATING_LABELS
 from models import ReportReason, User, UserStatus
 from repositories.discovery import DiscoveryRepository
 from repositories.profile import ProfileRepository
 from repositories.trust import TrustRepository
 from services.interest_normalizer import format_interests
 from services.like_service import LikeService
+from services.localization import LocalizationService
 from services.match_service import MatchService
 from services.notification_service import InternalNotificationService, NotificationService
 from services.profile_service import ProfileService
@@ -26,6 +28,11 @@ from utils.profile_media import profile_photo_ids, send_profile_gallery
 from utils.text import escape_html
 
 router = Router()
+localizer = LocalizationService()
+
+
+def _match_notification(name: str, contact: str, locale: str) -> str:
+    return localizer.format("notification_match", locale, name=name, contact=contact)
 
 
 def _target_id(callback: CallbackQuery) -> int | None:
@@ -44,7 +51,7 @@ async def _clear_callback_keyboard(callback: CallbackQuery) -> None:
             raise
 
 
-async def show_next(message: Message, user_id: int, session: AsyncSession, settings) -> None:
+async def show_next(message: Message, user_id: int, session: AsyncSession, settings, locale: str = "ru") -> None:
     profile = await ProfileService(session).get_profile(user_id)
     if profile is None:
         await message.answer(
@@ -73,7 +80,7 @@ async def show_next(message: Message, user_id: int, session: AsyncSession, setti
         user_id
     )
     if not recommendation:
-        promo = get_empty_discovery_promo(user_id, profile=profile)
+        promo = get_empty_discovery_promo(user_id, profile=profile, locale=locale)
         empty_kb_rows = [
             [
                 InlineKeyboardButton(text="🔄 Обновить выдачу", callback_data="next:profile"),
@@ -106,12 +113,12 @@ async def show_next(message: Message, user_id: int, session: AsyncSession, setti
     if p.verification_status.value == "VERIFIED":
         caption += "\n\n🟢 Проверенный профиль"
     caption += f"\n\n❤️ Совместимость: {round(recommendation.score)}%"
-    await send_profile_gallery(message, p, caption, dating_keyboard(p.user_id))
+    await send_profile_gallery(message, p, caption, dating_keyboard(p.user_id, locale))
 
 
-@router.message(F.text.in_({"💘 Знакомства", "💘 Смотреть анкеты", "Смотреть анкеты"}))
-async def browse(message: Message, session: AsyncSession, settings) -> None:
-    await show_next(message, message.from_user.id, session, settings)
+@router.message(F.text.in_(MENU_DATING_LABELS))
+async def browse(message: Message, session: AsyncSession, settings, locale: str = "ru") -> None:
+    await show_next(message, message.from_user.id, session, settings, locale)
 
 
 @router.callback_query(F.data.startswith("like:"))
@@ -159,18 +166,10 @@ async def like(callback: CallbackQuery, session: AsyncSession, settings) -> None
         fallback_source = callback.from_user.full_name or "Пользователь"
         source_name = escape_html(source_profile.name if source_profile else fallback_source)
 
-        match_target_text = (
-            f"🎉 <b>У вас взаимная симпатия с {source_name}!</b>\n\n"
-            f"Кажется, вы понравились друг другу! ✨ Не стесняйтесь сделать первый шаг и написать прямо сейчас.\n\n"
-            f"💬 <b>Контакт для связи:</b> {source_contact}\n\n"
-            f"Желаем вам приятного и тёплого общения! 💫"
-        )
-        match_source_text = (
-            f"🎉 <b>У вас взаимная симпатия с {target_name}!</b>\n\n"
-            f"Кажется, вы понравились друг другу! ✨ Не стесняйтесь сделать первый шаг и написать прямо сейчас.\n\n"
-            f"💬 <b>Контакт для связи:</b> {target_contact}\n\n"
-            f"Желаем вам приятного и тёплого общения! 💫"
-        )
+        target_locale = target_profile.locale if target_profile else "ru"
+        source_locale = source_profile.locale if source_profile else "ru"
+        match_target_text = _match_notification(source_name, source_contact, target_locale)
+        match_source_text = _match_notification(target_name, target_contact, source_locale)
 
         source_url = f"https://t.me/{callback.from_user.username}" if callback.from_user.username else f"tg://user?id={callback.from_user.id}"
         await notifier.safe_send(
@@ -190,7 +189,7 @@ async def like(callback: CallbackQuery, session: AsyncSession, settings) -> None
             reply_markup=match_kb,
         )
     else:
-        await notifier.safe_send(target, "💌 Кому-то понравилась ваша анкета.")
+        await notifier.safe_send_localized(target, session, "notification_like")
     await show_next(callback.message, callback.from_user.id, session, settings)
 
 
@@ -236,7 +235,7 @@ async def comment_finish(message: Message, state: FSMContext, session: AsyncSess
     rec_svc = RecommendationService(session, weights=settings.matching_weights)
     await rec_svc.remove_candidate(message.from_user.id, target)
     notifier = NotificationService(message.bot)
-    await notifier.safe_send(target, "💌 Кому-то понравилась ваша анкета.\n\n" + escape_html(text))
+    await notifier.safe_send_localized(target, session, "notification_like_comment", comment=escape_html(text))
     if match.created:
         target_profile, target_user = await DiscoveryRepository(session).profile_and_user(target)
         source_profile, _ = await DiscoveryRepository(session).profile_and_user(message.from_user.id)
@@ -292,9 +291,11 @@ async def comment_finish(message: Message, state: FSMContext, session: AsyncSess
 
 
 @router.callback_query(F.data == "promo:verification")
-async def promo_verification(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def promo_verification(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, locale: str = "ru"
+) -> None:
     await callback.answer()
-    await verification_start(callback.message, state, session)
+    await verification_start(callback.message, state, session, locale)
 
 
 @router.callback_query(F.data == "promo:confession")
@@ -349,7 +350,7 @@ async def block(callback: CallbackQuery, session: AsyncSession, settings) -> Non
 
 
 @router.callback_query(F.data.startswith("report:"))
-async def report(callback: CallbackQuery, session: AsyncSession) -> None:
+async def report(callback: CallbackQuery, session: AsyncSession, locale: str = "ru") -> None:
     target = _target_id(callback)
     if target is None:
         await callback.answer("Некорректная анкета.", show_alert=True)
@@ -358,7 +359,7 @@ async def report(callback: CallbackQuery, session: AsyncSession) -> None:
         "⚠️ Жалоба отправляется модераторам.\n\nПроверьте правила сообщества и процесс модерации:",
         reply_markup=documents_keyboard("community", "safety", "moderation"),
     )
-    await callback.message.answer("📌 Выберите причину жалобы:", reply_markup=report_reasons_keyboard(target))
+    await callback.message.answer("📌 Выберите причину жалобы:", reply_markup=report_reasons_keyboard(target, locale))
     await callback.answer()
 
 

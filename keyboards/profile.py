@@ -1,22 +1,27 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from services.localization import LocalizationService
+
 
 def profile_keyboard(
-    visible: bool = True, *, hidden_by_moderation: bool = False, accepts_confessions: bool = True
+    visible: bool = True, *, hidden_by_moderation: bool = False, accepts_confessions: bool = True,
+    locale: str = "ru",
 ):
+    text = LocalizationService().get
     kb = InlineKeyboardBuilder()
     if hidden_by_moderation:
-        kb.button(text="🚫 Анкета скрыта", callback_data="profile:blocked")
+        kb.button(text=text("profile_hidden", locale), callback_data="profile:blocked")
     else:
-        kb.button(text="🙈 Скрыть" if visible else "👀 Показать", callback_data="profile:toggle")
-    kb.button(text="✏️ Редактировать", callback_data="profile:edit")
-    kb.button(text="📷 Фотографии", callback_data="profile:photos")
+        kb.button(text=text("profile_hide" if visible else "profile_show", locale), callback_data="profile:toggle")
+    kb.button(text=text("profile_edit", locale), callback_data="profile:edit")
+    kb.button(text=text("profile_photos", locale), callback_data="profile:photos")
     kb.button(
-        text="💌 Признания: Вкл" if accepts_confessions else "💌 Признания: Выкл",
+        text=text("confessions_on" if accepts_confessions else "confessions_off", locale),
         callback_data="profile:confessions_toggle",
     )
-    kb.button(text="⏸ Пауза", callback_data="profile:pause")
-    kb.button(text="🗑 Удалить", callback_data="profile:delete")
+    kb.button(text=text("profile_pause", locale), callback_data="profile:pause")
+    kb.button(text=text("profile_delete", locale), callback_data="profile:delete")
+    kb.button(text=text("language_button", locale), callback_data="profile:language")
     kb.adjust(2)
     return kb.as_markup()
 

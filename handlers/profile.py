@@ -5,10 +5,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from handlers.registration import start_registration
-from keyboards.menu import main_menu
+from keyboards.menu import MENU_PROFILE_LABELS, main_menu
 from keyboards.profile import failed_photo_keyboard, photo_management_keyboard, photo_upload_keyboard, profile_keyboard
+from middlewares.i18n import normalize_locale
 from models import ModerationStatus, User, UserStatus
 from services.interest_normalizer import format_interests
+from services.localization import LocalizationService
 from services.photo_analysis_progress import dismiss_photo_analysis_progress, show_photo_analysis_progress
 from services.photo_moderation_service import PhotoModerationError, PhotoModerationService
 from services.photo_upload_lock import PhotoUploadBusyError, photo_upload_lock
@@ -20,6 +22,7 @@ from utils.profile_media import ordered_photo_ids, send_profile_gallery
 from utils.text import escape_html
 
 router = Router()
+localizer = LocalizationService()
 
 
 def _accepts_confessions(user: User | None) -> bool:
@@ -62,8 +65,9 @@ async def _safe_edit_reply_markup(message: Message, reply_markup: InlineKeyboard
             raise
 
 
-def _profile_description(profile) -> str:
-    verification = "🟢 Проверенный" if profile.verification_status.value == "VERIFIED" else "⚪ Непроверенный"
+def _profile_description(profile, locale: str = "ru") -> str:
+    verification_key = "profile_verified" if profile.verification_status.value == "VERIFIED" else "profile_unverified"
+    verification = LocalizationService().get(verification_key, locale)
     description = (
         f"{escape_html(profile.name)}, {profile.age}\n"
         f"📍 {escape_html(profile.district)}\n"
@@ -74,26 +78,31 @@ def _profile_description(profile) -> str:
         f"{verification}"
     )
     if profile.moderation_locked or profile.moderation_status.value == "UNDER_REVIEW":
-        description += "\n⏳ Анкета скрыта до решения модератора или замены фотографии."
+        description += "\n" + LocalizationService().get("profile_moderation_hidden", locale)
     return description
 
 
-async def _render_profile_message(message: Message, profile, *, accepts_confessions: bool = True) -> None:
+async def _render_profile_message(
+    message: Message, profile, *, accepts_confessions: bool = True, locale: str = "ru"
+) -> None:
     hidden_by_moderation = (
         profile.moderation_locked or profile.moderation_status == ModerationStatus.UNDER_REVIEW
     )
     await _update_message_text(
         message,
-        _profile_description(profile),
+        _profile_description(profile, locale),
         reply_markup=profile_keyboard(
             profile.is_visible and not hidden_by_moderation,
             hidden_by_moderation=hidden_by_moderation,
             accepts_confessions=accepts_confessions,
+            locale=locale,
         ),
     )
 
 
-async def show_profile(message: Message, user_id: int, session: AsyncSession, state: FSMContext) -> None:
+async def show_profile(
+    message: Message, user_id: int, session: AsyncSession, state: FSMContext, locale: str = "ru"
+) -> None:
     """Show the same profile screen for reply and inline menu actions."""
     user = await session.get(User, user_id)
     if user is not None and user.status in {UserStatus.SUSPENDED, UserStatus.BANNED}:
@@ -125,24 +134,58 @@ async def show_profile(message: Message, user_id: int, session: AsyncSession, st
     await send_profile_gallery(
         message,
         p,
-        _profile_description(p),
+        _profile_description(p, locale),
         profile_keyboard(
             p.is_visible and not hidden_by_moderation,
             hidden_by_moderation=hidden_by_moderation,
             accepts_confessions=_accepts_confessions(user),
+            locale=locale,
         ),
     )
 
 
-@router.message(F.text == "👤 Моя анкета")
-async def profile(message: Message, session: AsyncSession, state: FSMContext) -> None:
-    await show_profile(message, message.from_user.id, session, state)
+@router.message(F.text.in_(MENU_PROFILE_LABELS))
+async def profile(message: Message, session: AsyncSession, state: FSMContext, locale: str = "ru") -> None:
+    await show_profile(message, message.from_user.id, session, state, locale)
+
+
+@router.callback_query(F.data == "profile:language")
+async def choose_language(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "🌐 Выберите язык / Alege limba:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="language:set:ru")],
+            [InlineKeyboardButton(text="🇲🇩 Română", callback_data="language:set:ro")],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("language:set:"))
+async def set_language(callback: CallbackQuery, session: AsyncSession) -> None:
+    locale = normalize_locale(callback.data.rsplit(":", 1)[-1])
+    profile = await ProfileService(session).get_profile(callback.from_user.id)
+    if profile is None:
+        await callback.answer(localizer.get("profile_not_found", locale), show_alert=True)
+        return
+    profile.locale = locale
+    await session.flush()
+    await callback.answer(localizer.get("language_saved", locale))
+    await callback.message.answer(
+        localizer.get("language_saved", locale),
+        reply_markup=main_menu(locale),
+    )
 
 
 @router.callback_query(F.data == "promo:my_profile")
-async def promo_my_profile(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+async def promo_my_profile(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext, locale: str = "ru"
+) -> None:
     await callback.answer()
-    await show_profile(callback.message, callback.from_user.id, session, state)
+    if locale == "ru":
+        await show_profile(callback.message, callback.from_user.id, session, state)
+    else:
+        await show_profile(callback.message, callback.from_user.id, session, state, locale)
 
 
 @router.callback_query(F.data == "profile:blocked")
@@ -449,22 +492,27 @@ async def changed_photo_not_photo(message: Message) -> None:
 
 
 @router.callback_query(F.data == "photo:done")
-async def finish_photo_management(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+async def finish_photo_management(
+    callback: CallbackQuery, session: AsyncSession, state: FSMContext, locale: str = "ru"
+) -> None:
     await state.clear()
     profile = await ProfileService(session).get_profile(callback.from_user.id)
     if profile is None:
-        await callback.message.answer("Главное меню", reply_markup=main_menu())
+        await callback.message.answer(
+            LocalizationService().get("verification_home", locale), reply_markup=main_menu(locale)
+        )
         await callback.answer()
         return
     user = await session.get(User, callback.from_user.id)
     hidden_by_moderation = profile.moderation_locked or profile.moderation_status == ModerationStatus.UNDER_REVIEW
     await _update_message_text(
         callback.message,
-        _profile_description(profile),
+        _profile_description(profile, locale),
         reply_markup=profile_keyboard(
             profile.is_visible and not hidden_by_moderation,
             hidden_by_moderation=hidden_by_moderation,
             accepts_confessions=_accepts_confessions(user),
+            locale=locale,
         ),
     )
     await callback.answer()
@@ -536,7 +584,9 @@ async def toggle_confirm_cancel(callback: CallbackQuery, session: AsyncSession) 
         await callback.answer("Анкета не найдена", show_alert=True)
         return
     user = await session.get(User, callback.from_user.id)
-    await _render_profile_message(callback.message, profile, accepts_confessions=_accepts_confessions(user))
+    await _render_profile_message(
+        callback.message, profile, accepts_confessions=_accepts_confessions(user), locale=profile.locale or "ru"
+    )
     await callback.answer("Скрытие отменено")
 
 
@@ -588,5 +638,7 @@ async def delete_confirm_cancel(callback: CallbackQuery, session: AsyncSession) 
         await callback.answer("Анкета не найдена", show_alert=True)
         return
     user = await session.get(User, callback.from_user.id)
-    await _render_profile_message(callback.message, profile, accepts_confessions=_accepts_confessions(user))
+    await _render_profile_message(
+        callback.message, profile, accepts_confessions=_accepts_confessions(user), locale=profile.locale or "ru"
+    )
     await callback.answer("Удаление отменено")

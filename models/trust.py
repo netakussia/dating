@@ -29,6 +29,7 @@ class ModerationCaseType(str, enum.Enum):
     REPORT_THRESHOLD = "REPORT_THRESHOLD"
     NSFW = "NSFW"
     NO_FACE = "NO_FACE"
+    PHOTO_RETAKE = "PHOTO_RETAKE"
 
 
 class ModerationCaseStatus(str, enum.Enum):

@@ -7,14 +7,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from keyboards.menu import main_menu
+from keyboards.menu import MENU_HELP_LABELS, main_menu
 from models import User
 from services.confession_service import ConfessionService
+from services.localization import LocalizationService
 from services.notification_service import InternalNotificationService
 from states.bug_report import BugReportState
 from utils.admin_ui import admin_role_label
 from utils.document_links import documents_keyboard
-from utils.legal import LEGAL_NOTICE_TEXT, accept_consent, consent_already_given, ensure_consent_for_new_user
+from utils.legal import accept_consent, consent_already_given, ensure_consent_for_new_user
 from utils.text import escape_html
 
 ALPHA_NOTICE_TEXT = (
@@ -26,13 +27,11 @@ ALPHA_NOTICE_TEXT = (
 router = Router()
 
 
-async def _send_welcome(message: Message) -> None:
+async def _send_welcome(message: Message, locale: str = "ru") -> None:
     await send_and_pin_alpha_notice(message)
     await message.answer(
-        "👋 Добро пожаловать в MeAnima!\n\n"
-        "Заполните анкету в «👤 Моя анкета», чтобы найти близких по духу людей, "
-        "или перейдите в «💘 Знакомства» для просмотра профилей.",
-        reply_markup=main_menu(),
+        LocalizationService().get("welcome", locale),
+        reply_markup=main_menu(locale),
     )
 
 
@@ -46,22 +45,22 @@ async def send_and_pin_alpha_notice(message: Message) -> None:
 
 
 @router.callback_query(F.data == "legal:accept")
-async def legal_accept(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def legal_accept(callback: CallbackQuery, state: FSMContext, session: AsyncSession, locale: str = "ru") -> None:
     await accept_consent(callback, state)
-    await _send_welcome(callback.message)
+    await _send_welcome(callback.message, locale)
 
 
-async def _text_start(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
-    await start(message, state, session, settings)
+async def _text_start(message: Message, state: FSMContext, session: AsyncSession, settings, locale: str = "ru") -> None:
+    await start(message, state, session, settings, locale)
 
 
 @router.message(F.text.casefold() == "start")
-async def text_start(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
-    await _text_start(message, state, session, settings)
+async def text_start(message: Message, state: FSMContext, session: AsyncSession, settings, locale: str = "ru") -> None:
+    await _text_start(message, state, session, settings, locale)
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext, session: AsyncSession, settings) -> None:
+async def start(message: Message, state: FSMContext, session: AsyncSession, settings, locale: str = "ru") -> None:
     args = message.text.split(maxsplit=1)
     if len(args) == 2 and args[1].startswith("confession_"):
         try:
@@ -73,7 +72,7 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, sett
         except ValueError:
             pass
 
-    if not await ensure_consent_for_new_user(state, session, message.from_user.id, message):
+    if not await ensure_consent_for_new_user(state, session, message.from_user.id, message, locale):
         return
 
     consent = bool((await state.get_data()).get("legal_consent", False))
@@ -81,14 +80,14 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, sett
     if consent:
         await state.update_data(legal_consent=True)
 
-    await _send_welcome(message)
+    await _send_welcome(message, locale)
 
 
 @router.message(F.text.in_({"Продолжить", "✅ Продолжить"}))
-async def text_continue(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def text_continue(message: Message, state: FSMContext, session: AsyncSession, locale: str = "ru") -> None:
     if not await consent_already_given(state):
         await message.answer(
-            LEGAL_NOTICE_TEXT,
+            LocalizationService().get("legal_notice", locale),
             reply_markup=documents_keyboard(
                 "terms",
                 "privacy",
@@ -97,10 +96,11 @@ async def text_continue(message: Message, state: FSMContext, session: AsyncSessi
                 "moderation",
                 "alpha",
                 include_continue=True,
+                locale=locale,
             ),
         )
         return
-    await _send_welcome(message)
+    await _send_welcome(message, locale)
 
 
 @router.callback_query(F.data == "bug_report:start")
@@ -137,8 +137,8 @@ async def bug_report_submit(message: Message, state: FSMContext, settings) -> No
 
 
 @router.message(Command("help"))
-@router.message(lambda m: m.text in {"❓ Помощь", "⚙️ Настройки", "Настройки"})
-async def help_(message: Message, settings, session: AsyncSession) -> None:
+@router.message(lambda m: m.text in MENU_HELP_LABELS or m.text in {"⚙️ Настройки", "Настройки"})
+async def help_(message: Message, settings, session: AsyncSession, locale: str = "ru") -> None:
     admin_ids = sorted(settings.admin_ids)
     support_lines = []
     for admin_id in admin_ids:
@@ -146,7 +146,8 @@ async def help_(message: Message, settings, session: AsyncSession) -> None:
         username = user.username if user and user.username else None
         label = admin_role_label(admin_id, username=username, owner_admin_id=settings.owner_admin_id)
         support_lines.append(f'<a href="tg://user?id={admin_id}">{label}</a>')
-    support = "\n".join(support_lines) if support_lines else "Служба поддержки не настроена."
+    localizer = LocalizationService()
+    support = "\n".join(support_lines) if support_lines else localizer.get("help_support_unconfigured", locale)
     markup = documents_keyboard(
         "terms",
         "privacy",
@@ -154,21 +155,15 @@ async def help_(message: Message, settings, session: AsyncSession) -> None:
         "safety",
         "moderation",
         "alpha",
+        locale=locale,
     )
     markup.inline_keyboard.append(
-        [InlineKeyboardButton(text="👤 Моя анкета", callback_data="promo:my_profile")]
+        [InlineKeyboardButton(text=localizer.get("menu_profile", locale), callback_data="promo:my_profile")]
     )
     markup.inline_keyboard.append(
-        [InlineKeyboardButton(text="🐛 Сообщить о проблеме", callback_data="bug_report:start")]
+        [InlineKeyboardButton(text=localizer.get("help_report_problem", locale), callback_data="bug_report:start")]
     )
+    await message.answer(localizer.get("help_text", locale), reply_markup=markup)
     await message.answer(
-        "❓ <b>Помощь</b>\n"
-        "Переходите в «👤 Моя анкета» для создания или редактирования анкеты, \n"
-        "а затем откройте «💘 Знакомства» для поиска.\n\n"
-        "Признания отправляются анонимно.\n\n"
-        "📚 <b>Документы MeAnima</b>",
-        reply_markup=markup,
-    )
-    await message.answer(
-        f"Если нужна помощь, напишите одному из администраторов:\n{support}",
+        f"{localizer.get('help_support_prompt', locale)}\n{support}",
     )

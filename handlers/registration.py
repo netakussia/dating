@@ -209,9 +209,11 @@ async def start_registration(
         }
     ),
 )
-async def handle_menu_buttons_during_registration(message: Message, state: FSMContext) -> None:
+async def handle_menu_buttons_during_registration(
+    message: Message, state: FSMContext, locale: str = "ru"
+) -> None:
     await state.clear()
-    await message.answer("Вы вернулись в главное меню.", reply_markup=main_menu())
+    await message.answer(LocalizationService().get("returned_to_menu", locale), reply_markup=main_menu(locale))
 
 
 async def _go_to_previous_step(state: FSMContext) -> str:
@@ -404,6 +406,7 @@ async def preview_rephoto(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(RegistrationState.preview, F.data == "profile:publish")
 async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSession, settings) -> None:
     draft = await _get_draft(state)
+    locale = draft.get("locale") or "ru"
     payload = ProfileDraft(
         gender=draft.get("gender"),
         target_gender=draft.get("target_gender"),
@@ -450,18 +453,18 @@ async def publish(callback: CallbackQuery, state: FSMContext, session: AsyncSess
         await callback.message.answer(
             "⚠️ Фото отправлено на проверку модераторам. До решения анкета скрыта.\n"
             "Вы можете продолжить использование бота или заглянуть в «👤 Моя анкета».",
-            reply_markup=main_menu(),
+            reply_markup=main_menu(locale),
         )
     elif flagged_no_face:
         await callback.message.answer(
             "⚠️ На фото не найдено лицо. Замените фотографию в профиле; анкета отправлена на проверку.",
-            reply_markup=main_menu(),
+            reply_markup=main_menu(locale),
         )
     else:
         await callback.message.answer(
             "✅ Ваша анкета успешно опубликована!\n\n"
             "Теперь вы можете искать пару в разделе «💘 Знакомства» или настроить анкету в «👤 Моя анкета».",
-            reply_markup=main_menu(),
+            reply_markup=main_menu(locale),
         )
     await callback.answer()
 
@@ -481,7 +484,9 @@ async def preview_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(RegistrationState.preview, F.data == "profile:cancel")
 async def preview_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    locale = (await _get_draft(state)).get("locale") or "ru"
     await state.clear()
-    msg = "❌ Регистрация отменена. Вы можете начать заново в любой момент через «👤 Моя анкета»."
-    await callback.message.answer(msg, reply_markup=main_menu())
+    localizer = LocalizationService()
+    msg = localizer.get("registration_cancelled", locale)
+    await callback.message.answer(msg, reply_markup=main_menu(locale))
     await callback.answer()

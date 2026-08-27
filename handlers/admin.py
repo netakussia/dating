@@ -270,7 +270,7 @@ async def _show_next_photo_case(callback: CallbackQuery, session: AsyncSession) 
     items = [
         item
         for item in items
-        if item.case_type in {ModerationCaseType.NSFW, ModerationCaseType.NO_FACE}
+        if item.case_type in {ModerationCaseType.NSFW, ModerationCaseType.NO_FACE, ModerationCaseType.PHOTO_RETAKE}
     ]
     if not items:
         await callback.message.answer(

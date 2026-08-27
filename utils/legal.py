@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.localization import LocalizationService
 from services.profile_service import ProfileService
 from utils.document_links import documents_keyboard
 
@@ -17,6 +18,10 @@ LEGAL_NOTICE_TEXT = (
 )
 
 
+def legal_notice_text(locale: str = "ru") -> str:
+    return LocalizationService().get("legal_notice", locale)
+
+
 async def consent_already_given(state: FSMContext) -> bool:
     data = await state.get_data()
     return bool(data.get(CONSENT_KEY))
@@ -27,6 +32,7 @@ async def ensure_consent_for_new_user(
     session: AsyncSession,
     user_id: int,
     message: Message | CallbackQuery,
+    locale: str = "ru",
 ) -> bool:
     if await consent_already_given(state):
         return True
@@ -38,7 +44,7 @@ async def ensure_consent_for_new_user(
     if isinstance(message, CallbackQuery):
         await message.answer()
         await message.message.answer(
-            LEGAL_NOTICE_TEXT,
+            legal_notice_text(locale),
             reply_markup=documents_keyboard(
                 "terms",
                 "privacy",
@@ -47,11 +53,12 @@ async def ensure_consent_for_new_user(
                 "moderation",
                 "alpha",
                 include_continue=True,
+                locale=locale,
             ),
         )
     else:
         await message.answer(
-            LEGAL_NOTICE_TEXT,
+            legal_notice_text(locale),
             reply_markup=documents_keyboard(
                 "terms",
                 "privacy",
@@ -60,6 +67,7 @@ async def ensure_consent_for_new_user(
                 "moderation",
                 "alpha",
                 include_continue=True,
+                locale=locale,
             ),
         )
     return False

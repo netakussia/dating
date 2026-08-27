@@ -25,4 +25,10 @@ class LocalizationService:
 
     def format(self, key: str, locale: str = "ru", **kwargs: Any) -> str:
         value = self.get(key, locale=locale)
-        return value.format(**kwargs) if kwargs else value
+        if not kwargs:
+            return value
+        try:
+            return value.format(**kwargs)
+        except (IndexError, KeyError, TypeError, ValueError):
+            # A broken catalog entry must never take down a user update.
+            return value

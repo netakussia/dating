@@ -7,6 +7,7 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
+from services.localization import LocalizationService
 from services.profile_service import ProfileService
 from states.appeal import AppealState
 
@@ -46,7 +47,17 @@ class ProfileRequiredMiddleware(BaseMiddleware):
     async def __call__(
         self, handler: Callable[..., Awaitable[Any]], event: TelegramObject, data: dict[str, Any]
     ) -> Any:
-        if not self._requires_profile(event):
+        requires_profile = self._requires_profile(event)
+        if isinstance(event, Message):
+            localizer = data.get("localizer") or LocalizationService()
+            message_actions = set(self.message_actions)
+            for locale in ("ru", "ro"):
+                message_actions.update(
+                    localizer.get(key, locale)
+                    for key in ("menu_dating", "menu_likes", "menu_profile", "menu_verification", "menu_confession")
+                )
+            requires_profile = (event.text or "") in message_actions
+        if not requires_profile:
             return await handler(event, data)
         # Prefer the synchronized DB user set by UserSyncMiddleware; fall back to event.from_user
         current_user = data.get("current_user")

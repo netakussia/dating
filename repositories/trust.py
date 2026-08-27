@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,6 +87,9 @@ class TrustRepository:
             query = query.where(ModerationCase.source_id.is_(None))
         existing = await self.session.scalar(query)
         if existing:
+            if details is not None and existing.details != details:
+                existing.details = details
+                await self.session.flush()
             return existing, False
         case = ModerationCase(user_id=user_id, case_type=case_type, source_id=source_id, details=details)
         try:
@@ -127,6 +130,23 @@ class TrustRepository:
                 )
             ).all()
         )
+
+    async def close_photo_cases(self, user_id: int, *, source_id: str | None = None) -> int:
+        statement = (
+            update(ModerationCase)
+            .where(
+                ModerationCase.user_id == user_id,
+                ModerationCase.case_type.in_(
+                    (ModerationCaseType.NSFW, ModerationCaseType.NO_FACE, ModerationCaseType.PHOTO_RETAKE)
+                ),
+                ModerationCase.status.in_((ModerationCaseStatus.PENDING, ModerationCaseStatus.IN_PROGRESS)),
+            )
+            .values(status=ModerationCaseStatus.RESOLVED)
+        )
+        if source_id is not None:
+            statement = statement.where(ModerationCase.source_id == source_id)
+        result = await self.session.execute(statement)
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def photo_by_hash(self, content_hash: str) -> PhotoModeration | None:
         return await self.session.scalar(

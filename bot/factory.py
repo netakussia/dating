@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from config import Settings
 from handlers import routers
 from middlewares.db import DbSessionMiddleware
+from middlewares.i18n import FSMI18nMiddleware
 from middlewares.profile_required import ProfileRequiredMiddleware
 from middlewares.rate_limit import RateLimitMiddleware
 from middlewares.user import UserSyncMiddleware
@@ -42,6 +43,7 @@ def create_dispatcher(
         bot.notification_redis = redis
     dp.update.outer_middleware(DbSessionMiddleware(factory))
     dp.update.outer_middleware(UserSyncMiddleware())
+    dp.update.outer_middleware(FSMI18nMiddleware())
     dp.update.outer_middleware(ProfileRequiredMiddleware())
     dp.update.outer_middleware(RateLimitMiddleware(redis))
     for router in routers:

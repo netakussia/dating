@@ -164,10 +164,14 @@ class PhotoModerationService:
                         f"face_detected={assessment.face_detected}"
                     ),
                 )
-        elif profile and profile.moderation_locked:
-            # Freeze/lock is a moderator-controlled state. A successful photo check
-            # must never automatically lift a moderation restriction.
-            return
+        else:
+            close_photo_cases = getattr(self.repo, "close_photo_cases", None)
+            if close_photo_cases is not None:
+                await close_photo_cases(user_id)
+            if profile and profile.moderation_locked:
+                # Freeze/lock is a moderator-controlled state. A successful photo check
+                # must never automatically lift a moderation restriction.
+                return
 
     async def _send_to_manual_review(
         self, user_id: int, photo_file_id: str, content_hash: str | None, error_name: str

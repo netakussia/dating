@@ -8,9 +8,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import Settings
-from keyboards.menu import main_menu
+from keyboards.menu import MENU_CONFESSION_LABELS, MENU_LABELS, main_menu
 from services.confession_service import ConfessionService
 from services.eligibility import EligibilityError, EligibilityService
+from services.localization import LocalizationService
 from services.notification_service import NotificationService
 from states.confession import ConfessionState
 from utils.text import escape_html
@@ -20,21 +21,15 @@ router = Router()
 
 @router.message(
     StateFilter(ConfessionState),
-    F.text.in_({
-        "💘 Знакомства",
-        "💕 Мои симпатии",
-        "👤 Моя анкета",
-        "🛡 Верификация",
-        "💌 Признание",
-        "🆘 Апелляция",
-        "❓ Помощь",
-    }),
+    F.text.in_(MENU_LABELS),
 )
-async def handle_menu_buttons_during_confession(message: Message, state: FSMContext) -> None:
+async def handle_menu_buttons_during_confession(
+    message: Message, state: FSMContext, locale: str = "ru"
+) -> None:
     await state.clear()
-    await message.answer("Вы вернулись в главное меню.", reply_markup=main_menu())
+    await message.answer(LocalizationService().get("returned_to_menu", locale), reply_markup=main_menu(locale))
 
-@router.message(F.text == "💌 Признание")
+@router.message(F.text.in_(MENU_CONFESSION_LABELS))
 async def begin(message: Message, state: FSMContext, session: AsyncSession) -> None:
     # This source-only guard covers the first step; send() repeats it for a
     # stale FSM state after a later freeze.
@@ -108,8 +103,8 @@ async def send(callback: CallbackQuery, state: FSMContext, session: AsyncSession
         await callback.answer()
         return
     if confession.recipient_id:
-        delivered = await NotificationService(callback.bot).safe_send(
-            confession.recipient_id, f"💌 Вам анонимное признание:\n\n{escape_html(text)}"
+        delivered = await NotificationService(callback.bot).safe_send_localized(
+            confession.recipient_id, session, "notification_confession", confession=escape_html(text)
         )
         await callback.message.edit_text(
             "✅ Признание доставлено анонимно."

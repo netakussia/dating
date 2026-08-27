@@ -48,7 +48,9 @@ class ProfileService:
         payload = draft.to_payload()
         photo_file_ids = list(payload.get("photo_file_ids") or [])
         try:
-            validate_profile_payload(payload, photo_file_ids=photo_file_ids)
+            validate_profile_payload(
+                payload, photo_file_ids=photo_file_ids, locale=str(payload.get("locale") or "ru")
+            )
         except ProfileValidationError as exc:
             logger.warning("Invalid profile payload for user %s: %s", user_id, exc.errors)
             raise
@@ -68,6 +70,7 @@ class ProfileService:
         profile.institution = str(payload.get("institution") or "").strip()
         profile.interests = normalize_interests(payload.get("interests") or [])
         profile.bio = str(payload.get("bio") or "").strip()
+        profile.locale = str(payload.get("locale") or profile.locale or "ru").split("-", 1)[0].lower()
 
         user_status = await self._user_status_for(user_id)
         if self._is_visibility_restricted(profile, user_status=user_status):
@@ -110,18 +113,17 @@ class ProfileService:
         user = await self.session.get(User, user_id)
         if user is None:
             return False
-        # Appeals reference moderation cases with RESTRICT because cases must
-        # remain immutable during normal operation. During account deletion,
-        # remove the user's private moderation records first so that restriction
-        # cannot block the privacy operation.
+        # Keep the user row as an anonymized tombstone: reports reference it with
+        # CASCADE FKs, so deleting the row would destroy retained evidence.
         execute = getattr(self.session, "execute", None)
         if execute is not None:
             await execute(delete(Appeal).where(Appeal.user_id == user_id))
             await execute(delete(ModerationCase).where(ModerationCase.user_id == user_id))
-        # Every social record is tied to users with FK cascades.  Deleting the
-        # account, rather than just its profile, fulfils the deletion promise
-        # and prevents former matches from retaining a live Telegram contact.
-        await self.session.delete(user)
+        profile = await self.repo.by_user_id(user_id)
+        if profile is not None:
+            await self.session.delete(profile)
+        user.username = None
+        user.status = UserStatus.PAUSED
         await self.session.flush()
         return True
 

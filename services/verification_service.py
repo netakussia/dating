@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Profile, User, UserRole, VerificationDecision, VerificationRequest, VerificationStatus
@@ -65,18 +65,17 @@ class VerificationService:
         *,
         actor_role: UserRole | None = None,
     ):
-        role = actor_role or normalize_admin_role(getattr(await self.session.get(User, admin_id), "role", None))
+        if decision not in {
+            VerificationDecision.APPROVED,
+            VerificationDecision.REJECTED,
+            VerificationDecision.RETAKE_REQUESTED,
+        }:
+            raise ValueError(f"Unsupported verification decision: {decision}")
         conditions = [
             VerificationRequest.id == request_id,
             VerificationRequest.status == VerificationDecision.PENDING,
+            VerificationRequest.assigned_to == admin_id,
         ]
-        if not can_override_case(role):
-            conditions.append(
-                or_(
-                    VerificationRequest.assigned_to.is_(None),
-                    VerificationRequest.assigned_to == admin_id,
-                )
-            )
         result = await self.session.execute(
             update(VerificationRequest)
             .where(*conditions)
