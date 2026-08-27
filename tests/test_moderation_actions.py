@@ -171,7 +171,7 @@ async def test_photo_case_resolution_applies_positive_or_negative_profile_state(
     ("face_detected", "face_count", "face_score", "human_score", "expected_case_type"),
     [
         (False, 0, 0.0, 0.0, ModerationCaseType.NO_FACE),
-        (True, 1, 0.887, 0.291, ModerationCaseType.PHOTO_RETAKE),
+        (True, 1, 0.45, 0.291, ModerationCaseType.PHOTO_RETAKE),
     ],
 )
 async def test_red_photo_case_type_matches_the_detected_face_signal(
@@ -218,7 +218,7 @@ async def test_red_photo_case_type_matches_the_detected_face_signal(
 
 
 def test_detected_face_quality_failure_is_not_mislabeled_as_no_face():
-    from services.photo_moderation_service import RED, moderation_zone
+    from services.photo_moderation_service import moderation_zone
     from services.photo_safety_providers import PhotoAssessment
 
     assessment = PhotoAssessment(
@@ -230,7 +230,7 @@ def test_detected_face_quality_failure_is_not_mislabeled_as_no_face():
         human_score=0.291,
     )
 
-    assert moderation_zone(assessment) != RED
+    assert moderation_zone(assessment) == "GREEN"
 
 
 @pytest.mark.asyncio

@@ -109,8 +109,8 @@ def test_moderation_zone_matches_requested_cascade_policy():
     )
 
     assert moderation_zone(green) == "GREEN"
-    assert moderation_zone(yellow_border) == "YELLOW"
-    assert moderation_zone(yellow_human_disagreement) == "YELLOW"
+    assert moderation_zone(yellow_border) == "GREEN"
+    assert moderation_zone(yellow_human_disagreement) == "GREEN"
     assert moderation_zone(yellow_soft) == "YELLOW"
     assert moderation_zone(red_low_face) == "RED"
     assert moderation_zone(red_no_face) == "RED"

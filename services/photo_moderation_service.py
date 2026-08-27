@@ -62,16 +62,18 @@ def moderation_zone(assessment: PhotoAssessment, *, nsfw_red_threshold: float = 
         # A dating profile without a face cannot be accepted as a portrait.
         return RED
     
+    # A strong face detector result plus clean NSFW is sufficient for a clear
+    # portrait. The secondary human signal is only a tie-breaker for weaker
+    # face detections; it is not calibrated as a human probability.
+    if assessment.face_score > 0.80 and assessment.nsfw_score < 0.20:
+        return GREEN
+
     # A weak face detector score is a hard failure. A disagreement with the
     # secondary human signal is uncertain and belongs in manual review.
     if assessment.face_score < 0.50:
         return RED
     if assessment.human_score < 0.35:
         return YELLOW
-    
-    # Excellent portrait
-    if assessment.face_score > 0.80 and assessment.human_score > 0.80 and assessment.nsfw_score < 0.20:
-        return GREEN
     
     # Everything else: borderline case
     return YELLOW
